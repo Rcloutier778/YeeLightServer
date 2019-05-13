@@ -258,7 +258,6 @@ def discoverBulbs():
         print(bulb)
 
         
-        
 def logon():
     on()
     autoset(autosetDuration=3000)
