@@ -70,7 +70,7 @@ def main():
 
         if cmd in allcommands:
             if cmd in commands:
-                if cmd != 'autoset' :
+                if 'autoset' not in cmd:
                     log.info(cmd)
                 
                 if usr=='richard':
