@@ -7,7 +7,7 @@ import datetime
 import logging
 import os
 
-os.chdir('/home/richard/yeelight/')
+os.chdir('/home/richard/YeeLightServer/')
 
 log = logging.getLogger('log')
 logging.basicConfig(filename=os.getcwd()+'/log.log',
@@ -64,7 +64,7 @@ def main():
 
         if cmd in allcommands:
             if cmd in commands:
-                if cmd != 'autoset':
+                if cmd != 'autoset' :
                     log.info(cmd)
                 
                 if usr=='richard':
@@ -99,14 +99,19 @@ def autoset_auto():
                 f.write(datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"))
                 f.write(" :  off\n")
         else: #Was 0, now 1
+            #with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'r') as f:
+            #    ld = f.read().strip()
+            #if datetime.datetime.strptime(ld,'%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
+            #    continue
+
             on()
             autoset(autosetDuration=30)
             with open('/home/richard/yeelight/log.log','a+') as f:
                 f.write(datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"))
                 f.write(" :  on\n")
 
-phoneStatus=None
-pcStatus=None
+phoneStatus=True
+pcStatus=True
 
 def checkPing():
     global phoneStatus
@@ -117,26 +122,31 @@ def checkPing():
         sleepTime=0.5
     attempts=0
     while True:
-        phone_response = not bool(os.system("ping -c 1 -W 1 "+phoneIP))
-        pc_response = not bool(os.system("ping -c 1 -W 1 "+pcIP))
-        if (phone_response == phoneStatus) and (pcStatus==pc_response): #no changes
+        phone_response = not bool(os.system("ping -c 1 -W 2 "+phoneIP))
+        pc_response = not bool(os.system("ping -c 1 -W 2 "+pcIP))
+        if (phone_response == phoneStatus) and (pc_response==pcStatus): #no changes
             time.sleep(sleepTime)
             attempts=0
+            continue
         elif not phone_response: #phone is missing
             attempts+=1
             if attempts > 3: #try 3 times 
+                log.info("Phone missing")
                 pcStatus=pc_response
                 phoneStatus=phone_response
                 return False
         elif (not phoneStatus) and phone_response: #phone re-appears
+            log.info("Phone re appeared")
             pcStatus=pc_response
             phoneStatus=phone_response
             return True
         elif phone_response and pc_response and not pcStatus: #if pc turns on
+            log.info('PC turned on')
             pcStatus=pc_response
             phoneStatus=phone_response
             return True
         elif phoneStatus and pcStatus and not pc_response: #if pc turns off
+            log.info("PC turned off")
             pcStatus=pc_response
             phoneStatus=phone_response
             return False

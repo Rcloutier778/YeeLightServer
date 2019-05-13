@@ -1,1 +1,1 @@
-/usr/local/bin/python3.7 /home/richard/yeelight/yeelightpython.py sunrise Richard
+/usr/local/bin/python3.7 /home/richard/YeeLightServer/yeelightpython.py sunrise Richard
