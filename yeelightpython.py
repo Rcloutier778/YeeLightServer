@@ -19,9 +19,15 @@ logging.basicConfig(filename=os.getcwd()+'/log.log',
 r_bed_stand = "10.0.0.5"
 r_bed_desk ="10.0.0.10"
 b=[]
+
 phoneIP=None
 pcIP=None
+
 user=None
+
+phoneStatus=True
+pcStatus=True
+
 commands=['dusk','day','night','sleep', 'off', 'on','toggle','sunrise','autoset','logon','autoset_auto']
 allcommands=commands + ['bright','brightness','rgb']
 
@@ -94,24 +100,14 @@ def autoset_auto():
         phoneFound = checkPing()
 
         if not phoneFound: #Was 1, now 0
+            log.info("Autoset_auto off")
             off()
-            with open('/home/richard/yeelight/log.log','a+') as f:
-                f.write(datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"))
-                f.write(" :  off\n")
         else: #Was 0, now 1
-            #with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'r') as f:
-            #    ld = f.read().strip()
-            #if datetime.datetime.strptime(ld,'%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
-            #    continue
-
+            log.info("Autoset_auto on")
             on()
             autoset(autosetDuration=30)
-            with open('/home/richard/yeelight/log.log','a+') as f:
-                f.write(datetime.datetime.now().strftime("%Y-%m-%d %I:%M:%S %p"))
-                f.write(" :  on\n")
 
-phoneStatus=True
-pcStatus=True
+
 
 def checkPing():
     global phoneStatus
@@ -122,8 +118,8 @@ def checkPing():
         sleepTime=0.5
     attempts=0
     while True:
-        phone_response = not bool(os.system("ping -c 1 -W 2 "+phoneIP))
-        pc_response = not bool(os.system("ping -c 1 -W 2 "+pcIP))
+        phone_response = not bool(os.system("ping -c 1 -W 1 "+phoneIP))
+        pc_response = not bool(os.system("ping -c 1 -W 1 "+pcIP))
         if (phone_response == phoneStatus) and (pc_response==pcStatus): #no changes
             time.sleep(sleepTime)
             attempts=0
@@ -151,31 +147,18 @@ def checkPing():
             phoneStatus=phone_response
             return False
 
-        '''
-        if phone_response==phoneStatus:#Nothing Changed
-            time.sleep(sleepTime)
-            attempts=0
-        else:
-            if not phone_response: #Phone not found
-                attempts += 1
-                if attempts > 3:
-                    #Phone not found
-                    return False
-            else: #Phone found
-                return True
 
-        '''
-
-
-
-
+def writeManualOverride():
+    with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'w+') as f:
+        f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
 
 def sunrise():
     #Prevent autoset from taking over
-    with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'w+') as f:
-        f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
+    writeManualOverride()
+
     overallDuration=1200000 #1200000 == 20 min
     on()
+
     for i in b:
         i.set_brightness(0)
         i.set_rgb(255, 0, 0)
@@ -321,18 +304,6 @@ def autoset(autosetDuration=300000):
         log.info("Autoset: dnd")
         off()
     return 0
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 if __name__ == "__main__":
