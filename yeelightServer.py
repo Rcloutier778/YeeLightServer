@@ -47,6 +47,12 @@ class MyHandler(BaseHTTPRequestHandler):
             if data["eventType"]=='manual':
                 with open('/home/richard/YeeLightServer/'+ data['user'] +'_manualOverride.txt','w+') as f:
                     f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
+                with open('/home/richard/YeeLightServer/bulbStateLog','r+') as f:
+                    jdict = json.load(f)
+                    jdict['state'] = data["newState"]
+                    f.seek(0)
+                    json.dump(jdict,f)
+                    f.truncate()
         except Exception as e:
             print(e)
         return

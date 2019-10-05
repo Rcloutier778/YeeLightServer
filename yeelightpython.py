@@ -5,9 +5,11 @@ import yeelight.enums
 import sys
 import datetime
 import logging
+import json
 import os
 
-os.chdir('/home/richard/YeeLightServer/')
+HOMEDIR = '/home/richard/YeeLightServer/'
+os.chdir(HOMEDIR)
 
 log = logging.getLogger('log')
 logging.basicConfig(filename=os.getcwd()+'/log.log',
@@ -95,7 +97,15 @@ def main():
 
 
 def autoset_auto():
-    log.info("Boot autoset_auto")
+    log.error("Boot autoset_auto")
+
+    #Below added to fix bug where this program would crash and burn upon phone reappearing
+    #on()
+    #autoset(autosetDuration=300)
+    resetFromLoggedState()
+
+    #End hack
+
     while True:
         phoneFound = checkPing()
 
@@ -103,11 +113,40 @@ def autoset_auto():
             log.info("Autoset_auto off")
             off()
         else: #Was 0, now 1
-            log.info("Autoset_auto on")
-            on()
-            autoset(autosetDuration=30)
+            while True:
+                log.info("Autoset_auto on")
+                try:
+                    on()
+                    log.info("After on")
+                    autoset(autosetDuration=300, autoset_auto_var=True)
+                    break
+                except Exception as e:
+                    log.error(e)
+                    log.error(sys.exc_info())
 
+def resetFromLoggedState():
+    global phoneStatus
+    global pcStatus
 
+    jdict = getLastState()
+    state = jdict['state']
+    phoneStatus = jdict['phoneStatus']
+    pcStatus = jdict['pcStatus']
+
+    if state=='day':
+        day()
+    elif state=='dusk':
+        dusk()
+    elif state=='night':
+        night()
+    elif state=='sleep':
+        sleep()
+    elif state=='off':
+        off()
+    elif state=='on':
+        on()
+    elif state=='color':
+        pass #Color is being manually manipulated, don't touch
 
 def checkPing():
     global phoneStatus
@@ -118,21 +157,22 @@ def checkPing():
         sleepTime=0.5
     attempts=0
     while True:
-        phone_response = not bool(os.system("ping -c 1 -W 1 "+phoneIP))
+        time.sleep(sleepTime)
+        phone_response = not bool(os.system("ping -c 1 -W 2 "+phoneIP))
         pc_response = not bool(os.system("ping -c 1 -W 1 "+pcIP))
         if (phone_response == phoneStatus) and (pc_response==pcStatus): #no changes
-            time.sleep(sleepTime)
             attempts=0
             continue
         elif not phone_response: #phone is missing
             attempts+=1
-            if attempts > 3: #try 3 times 
+            if attempts > 2: #try 3 times 
                 log.info("Phone missing")
                 pcStatus=pc_response
                 phoneStatus=phone_response
                 return False
         elif (not phoneStatus) and phone_response: #phone re-appears
             log.info("Phone re appeared")
+            attempts=0
             pcStatus=pc_response
             phoneStatus=phone_response
             return True
@@ -156,6 +196,9 @@ def sunrise():
     #Prevent autoset from taking over
     writeManualOverride()
 
+    #Write the new state
+    writeState('day')
+
     overallDuration=1200000 #1200000 == 20 min
     on()
 
@@ -177,33 +220,39 @@ def brightness(val):
         i.set_brightness(val)
 
 def day(duration=3000,auto=False):
+    writeState('day')
     if not auto:
         on()
     #3200
     colorTempFlow(__DAY_COLOR, duration, 80)
 
 def dusk(duration=3000,auto=False):
+    writeState('dusk')
     if not auto:
         on()
     #3000
     colorTempFlow(__DUSK_COLOR, duration, 80)
     
 def night(duration=3000,auto=False):
+    writeState('night')
     if not auto:
         on()
     colorTempFlow(__NIGHT_COLOR, duration, 80)
 
 def sleep(duration=3000,auto=False):
+    writeState('sleep')
     if not auto:
         on()
     colorTempFlow(__SLEEP_COLOR,duration,20)
 
 def off():
+    writeState('off')
     while all(x.get_properties()['power'] != 'off' for x in b):
         for i in b:
             i.turn_off()
 
 def on():
+    writeState('on')
     while all(x.get_properties()['power'] != 'on' for x in b):
         for i in b:
             i.turn_on()
@@ -227,6 +276,25 @@ def colorTempFlow(temperature=3200,duration=3000, brightness=80):
                                    action=yeelight.Flow.actions.stay,
                                    transitions=[transition]))
 
+def writeState(newState):
+    with open(HOMEDIR+'bulbStateLog','r+') as f:
+        jdict = json.load(f)
+        if not (newState==jdict['state'] \
+                and pcStatus==jdict['pcStatus'] \
+                and phoneStatus==jdict['phoneStatus']):
+            jdict = {'state':newState,'pcStatus':pcStatus,'phoneStatus':phoneStatus}
+            f.seek(0)
+            json.dump(jdict, f)
+            f.truncate()
+
+def getLastState():
+    validStates = ['day','dusk','night','off','sleep','on','color']
+    with open(HOMEDIR+'bulbStateLog','r') as f:
+        jdict = json.load(f)
+        if jdict['state'] not in validStates:
+            jdict['state']='off'
+    return jdict
+
 
 def lightTime():
     #TODO
@@ -246,33 +314,36 @@ def logon():
     autoset(autosetDuration=3000)
     return
     
-def autoset(autosetDuration=300000):
+def autoset(autosetDuration=300000, autoset_auto_var=False):
     if all(x.get_properties()['power']=='off' for x in b):
         log.info('Power is off, cancelling autoset')
         return -1
-    #Check if system tray has been used recently to override autoset
-    with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'r') as f:
-        ld = f.read().strip()
-    if datetime.datetime.strptime(ld,'%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
-        print("SystemTray used recently, canceling autoset")
-        log.info("SystemTray used recently, canceling autoset")
-        return -1
-    
+    log.info("1")
+
+    #If what called autoset is not a checkping event
+    if not autoset_auto_var:
+        #Check if system tray has been used recently to override autoset
+        with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'r') as f:
+            ld = f.read().strip()
+        if datetime.datetime.strptime(ld,'%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
+            print("SystemTray used recently, canceling autoset")
+            log.info("SystemTray used recently, canceling autoset")
+            return -1
     
     #set light level when computer is woken up, based on time of day
     rn=datetime.datetime.now() # If there is ever a problem here, just use time.localtime()
     now=datetime.time(rn.hour,rn.minute,0)
     print('now:',now)
     
-    dayrange = ["6:50:AM", "6:00:PM"]
+    dayrange = ["6:15:AM", "6:30:PM"]
     if time.localtime().tm_wday in [5, 6]: #weekend
         print("weekend")
-        dayrange[0] = "8:30:AM"
+        dayrange[0] = "7:30:AM"
 
     #TODO Remember to make changes to raspberry pi too!
-    duskrange=[dayrange[1],"7:45:PM"]
-    nightrange=[duskrange[1],"9:30:PM"]
-    sleeprange=[nightrange[1],"11:00:PM"]
+    duskrange=[dayrange[1],"7:00:PM"]
+    nightrange=[duskrange[1],"8:30:PM"]
+    sleeprange=[nightrange[1],"10:30:PM"]
     DNDrange=[sleeprange[1],dayrange[0]]
     
     
