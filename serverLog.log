@@ -1,0 +1,90 @@
+
+
+2019-10-19 12:24:29PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-19 12:24:49PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-19 12:24:50PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-19 10:30:03PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-19 10:30:08PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'sleep'}
+2019-10-19 11:45:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-20 10:30:04PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-20 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-20 10:30:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-21 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-21 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-21 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-21 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-21 10:30:09PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-21 11:45:04PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-22 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-22 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-22 10:30:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-24 10:41:26PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-24 10:41:26PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-24 10:41:27PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-25 10:30:18PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-25 10:30:18PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-25 10:30:18PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-25 10:30:19PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-25 10:30:19PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-25 11:45:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 01:00:08AM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 02:15:04AM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 02:13:32PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 02:18:38PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 02:20:02PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 02:21:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 02:21:09PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 02:21:09PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 02:21:11PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 02:21:12PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 02:21:30PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 02:21:31PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 06:00:25PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-26 06:00:26PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 06:01:56PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'day'}
+2019-10-26 06:01:58PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'dusk'}
+2019-10-26 06:46:22PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'night'}
+2019-10-26 06:46:30PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'dusk'}
+2019-10-26 07:53:36PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 07:54:57PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 07:55:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 07:55:43PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 07:57:05PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 07:59:03PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 07:59:09PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 07:59:12PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 07:59:56PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:00:04PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 08:00:18PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:00:32PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 08:00:35PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:01:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 08:01:14PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:02:38PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 08:02:40PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:03:02PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:04:09PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:06:02PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:07:40PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:08:39PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:09:38PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:10:02PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:13:55PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:15:21PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:16:56PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:19:42PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:19:52PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:21:28PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:22:01PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:23:38PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:24:47PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:26:17PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:27:09PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:28:50PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:30:04PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:31:09PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:40:08PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:41:15PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:41:48PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:44:14PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 08:45:41PM serverLog INFO Server Starts - 10.0.0.17:9000

@@ -12,14 +12,13 @@ HOMEDIR = '/home/richard/YeeLightServer/'
 os.chdir(HOMEDIR)
 
 log = logging.getLogger('log')
-logging.basicConfig(filename=os.getcwd()+'/log.log',
+logging.basicConfig(filename=HOMEDIR+'log.log',
                     filemode='a',
                     format='%(asctime)s %(name)s %(levelname)s %(message)s',
                     datefmt='%Y-%m-%d %I:%M:%S%p',
                     level=logging.INFO)
 
-r_bed_stand = "10.0.0.5"
-r_bed_desk ="10.0.0.10"
+richard_bulb_ips=["10.0.0.5","10.0.0.10","10.0.0.15"]
 b=[]
 
 phoneIP=None
@@ -37,7 +36,11 @@ __DAY_COLOR=4000
 __DUSK_COLOR=3300
 __NIGHT_COLOR=2500
 __SLEEP_COLOR=1500
+__SUNSET_TIME = '5:30:PM'
+__TWILIGHT_TIME = '6:30:PM'
+__SLEEP_TIME = '10:30:PM'
 
+__AUTOSET_NIGHT_RANGE=[]
 #TODO
 """
 1) autoset on wakeup from lan
@@ -77,7 +80,9 @@ def main():
                 
                 if usr=='richard':
                     user='richard'
-                    b=[yeelight.Bulb(r_bed_stand), yeelight.Bulb(r_bed_desk)]
+                    b=[]
+                    for blb in richard_bulb_ips:
+                        b.append(yeelight.Bulb(blb))
                     phoneIP="10.0.0.7"
                     pcIP="10.0.0.2"
                 else: #make this elif then throw error w/ else 
@@ -98,20 +103,27 @@ def main():
 
 def autoset_auto():
     log.error("Boot autoset_auto")
-
+    try:
+        set_IRL_sunset()
+    except Exception as e:
+        log.error(e, exc_info=True)
     #Below added to fix bug where this program would crash and burn upon phone reappearing
     #on()
     #autoset(autosetDuration=300)
     resetFromLoggedState()
 
     #End hack
-
+    try:
+        autoset()
+    except Exception as e:
+        log.error(e, exc_info=True)
+    log.info('Entering loop')
     while True:
         phoneFound = checkPing()
 
         if not phoneFound: #Was 1, now 0
             log.info("Autoset_auto off")
-            off()
+            off(True)
         else: #Was 0, now 1
             while True:
                 log.info("Autoset_auto on")
@@ -123,6 +135,7 @@ def autoset_auto():
                 except Exception as e:
                     log.error(e)
                     log.error(sys.exc_info())
+
 
 def resetFromLoggedState():
     global phoneStatus
@@ -147,6 +160,9 @@ def resetFromLoggedState():
         on()
     elif state=='color':
         pass #Color is being manually manipulated, don't touch
+    elif 'custom:' in state:
+        temperature = int(state.split(':')[1])
+        customTempFlow(temperature)
 
 def checkPing():
     global phoneStatus
@@ -245,7 +261,24 @@ def sleep(duration=3000,auto=False):
         on()
     colorTempFlow(__SLEEP_COLOR,duration,20)
 
-def off():
+def customTempFlow(temperature, duration=3000, auto=False, brightness=80):
+    writeState('custom:%d'%temperature)
+    if not auto:
+        on()
+    colorTempFlow(temperature, duration, brightness)
+
+
+
+def off(auto=False):
+    if auto:
+        #Check if system tray has been used recently to override autoset
+        with open(os.getcwd()+'/'+user+'_manualOverride.txt', 'r') as f:
+            ld = f.read().strip()
+        if datetime.datetime.strptime(ld,'%Y-%m-%d %H:%M:%S') + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
+            print("SystemTray used recently, canceling autoset")
+            log.info("SystemTray used recently, canceling autoset")
+            return -1
+    
     writeState('off')
     while all(x.get_properties()['power'] != 'off' for x in b):
         for i in b:
@@ -291,7 +324,7 @@ def getLastState():
     validStates = ['day','dusk','night','off','sleep','on','color']
     with open(HOMEDIR+'bulbStateLog','r') as f:
         jdict = json.load(f)
-        if jdict['state'] not in validStates:
+        if jdict['state'] not in validStates and 'custom:' not in jdict['state']:
             jdict['state']='off'
     return jdict
 
@@ -318,7 +351,6 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     if all(x.get_properties()['power']=='off' for x in b):
         log.info('Power is off, cancelling autoset')
         return -1
-    log.info("1")
 
     #If what called autoset is not a checkping event
     if not autoset_auto_var:
@@ -335,15 +367,15 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     now=datetime.time(rn.hour,rn.minute,0)
     print('now:',now)
     
-    dayrange = ["6:15:AM", "6:30:PM"]
+    dayrange = ["6:15:AM",__SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]: #weekend
         print("weekend")
         dayrange[0] = "7:30:AM"
 
     #TODO Remember to make changes to raspberry pi too!
-    duskrange=[dayrange[1],"7:00:PM"]
-    nightrange=[duskrange[1],"8:30:PM"]
-    sleeprange=[nightrange[1],"10:30:PM"]
+    duskrange=[dayrange[1],__TWILIGHT_TIME]
+    nightrange=[duskrange[1],"9:30:PM"]
+    sleeprange=[nightrange[1],__SLEEP_TIME]
     DNDrange=[sleeprange[1],dayrange[0]]
     
     
@@ -362,19 +394,58 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
         print("Dusk")
         log.info("Autoset: Dusk")
         dusk(autosetDuration,True)
-    elif nightrange[0] <= now < nightrange[1]:
-        print("Night")
-        log.info("Autoset: Night")
-        night(autosetDuration,True)
-    elif sleeprange[0] <= now < sleeprange[1]:
-        print("Sleep")
-        log.info("Autoset: Sleep")
-        sleep(autosetDuration,True)
-    elif DNDrange[0] <= now or now < DNDrange[1]:
+    else:
+        log.info(now)
+        for startTime, endTime, temperature, brightness in __AUTOSET_NIGHT_RANGE:
+            if startTime <= now < endTime:
+                log.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
+                customTempFlow(temperature,duration = autosetDuration, auto=True,  brightness=brightness)
+                return 0
+    if DNDrange[0] <= now or now < DNDrange[1]:
         print("dnd")
         log.info("Autoset: dnd")
         off()
     return 0
+
+
+def set_IRL_sunset():
+    global __SUNSET_TIME
+    global __AUTOSET_NIGHT_RANGE
+    global __TWILIGHT_TIME
+    import requests
+    import json
+    import pytz
+    import datetime
+    import math
+    r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677')
+    assert r.status_code == 200
+    origDict = json.loads(r.text)['results']
+    newDict = {}
+    for key in ['sunset','civil_twilight_end']:
+        ogTime = datetime.datetime.strptime(origDict[key],"%I:%M:%S %p")
+        localTime = pytz.utc.localize(ogTime).astimezone(pytz.timezone('US/Eastern'))
+        localTime = localTime.replace(tzinfo=None)
+        origDict[key] = localTime#.strftime("%I:%M:%S %p")
+    __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
+    __TWILIGHT_TIME = origDict['civil_twilight_end'].strftime("%I:%M:%p")
+    returnRange = []
+    iters = 20 #number of iters to calc on 
+    tempDiff = __DUSK_COLOR - __SLEEP_COLOR #temp difference between sunset and sleep
+    brightnessChangePoint = __DUSK_COLOR - (3*tempDiff//4) #when to start changing brightness
+    timeDiff = (datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") -origDict['civil_twilight_end']).total_seconds()//60 #minutes between AFTER sunset and sleep
+
+    for i in range(iters+1):
+        brightness=80
+        startTime = origDict['civil_twilight_end'] + datetime.timedelta(minutes=timeDiff*i//iters)
+
+        endTime = startTime + datetime.timedelta(minutes=timeDiff//iters)
+        temperature = __DUSK_COLOR - int(tempDiff*i//iters)
+        if temperature < brightnessChangePoint:
+            brightness = int(80 * ((iters-i)/iters)) + 20
+        returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
+
+    __AUTOSET_NIGHT_RANGE = returnRange
+    
 
 
 if __name__ == "__main__":
