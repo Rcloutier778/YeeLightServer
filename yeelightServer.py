@@ -40,6 +40,7 @@ class MyHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
         
+        print(self.data_string)
         data = json.loads(self.data_string)
         logger.info(data)
         try:
@@ -70,13 +71,42 @@ class MyHandler(BaseHTTPRequestHandler):
         self.send_response(status_code)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        content = '''
-        <html><head><title>Title goes here.</title></head>
-        <body><p>This is a test.</p>
-        <p>You accessed path: {}</p>
-        </body></html>
-        '''.format(path)
+        if path=='/color':
+            content=self.colorPicker()
+        else:
+            content = '''
+            <html><head><title>Title goes here.</title></head>
+            <body><p>This is a test.</p>
+            <p>You accessed path: {}</p>
+            </body></html>
+            '''.format(path)
         return bytes(content, 'UTF-8')
+
+    
+    def colorPicker(self):
+        content='''
+        
+        <html>
+        <body>
+        
+        <h2>Color Picker</h2>
+        <p>The <strong>input type="color"</strong> is used for input fields that should contain a color.</p>
+        <p>Depending on browser support:<br>A color picker can pop-up when you enter the input field.</p>
+        
+        <form action="/action_page" method="post">
+          Select your favorite color:
+          <input type="color" name="favcolor">
+          <input type="submit" value="Submit">
+        </form>
+        
+        <p><b>Note:</b> type="color" is not supported in Internet Explorer 11 and earlier versions or Safari 9.1 and earlier versions.</p>
+        
+        </body>
+        </html>
+        '''
+        
+        return content
+
 
     def respond(self, opts):
         response = self.handle_http(opts['status'], self.path)
@@ -89,8 +119,8 @@ if __name__ == '__main__':
     
     
     if args.dev:
-        HOST_NAME = 'localhost'  #
-        PORT_NUMBER = 8080
+        HOST_NAME = '10.0.0.2'  #
+        PORT_NUMBER = 9000
     else:
         HOST_NAME = '10.0.0.17'
         PORT_NUMBER = 9000
