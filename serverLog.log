@@ -88,3 +88,79 @@
 2019-10-26 08:41:48PM serverLog INFO Server Starts - 10.0.0.17:9000
 2019-10-26 08:44:14PM serverLog INFO Server Starts - 10.0.0.17:9000
 2019-10-26 08:45:41PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-26 11:12:54PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'sleep'}
+2019-10-26 11:14:28PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 11:16:21PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-26 11:16:56PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 09:50:06PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 09:52:18PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 09:54:54PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:02:25PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:03:41PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:04:25PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:06:05PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:06:20PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:08:18PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:08:30PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:09:06PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:09:30PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:11:02PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:12:53PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:13:36PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:14:22PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-27 10:14:39PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-28 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-28 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-28 10:30:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'sleep'}
+2019-10-28 11:33:56PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:34:25PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:34:47PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:35:35PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:35:47PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-28 11:35:51PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:36:09PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:36:23PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:38:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-28 11:38:19PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:42:59PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:43:07PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-28 11:43:20PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:43:42PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:44:01PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:44:45PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-28 11:48:21PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:15:05PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:16:24PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:17:18PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:19:11PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:19:31PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:20:17PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:21:08PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:37:46PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 07:38:31PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:00:08PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:00:37PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:01:07PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:01:35PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:01:55PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:02:11PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:02:48PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:03:10PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:03:36PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 08:03:50PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-10-29 10:30:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-29 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-29 10:30:06PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-29 11:45:05PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-30 10:56:20PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-30 10:56:20PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-30 10:56:21PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-30 10:56:21PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-10-30 10:56:21PM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-10-31 06:22:36PM serverLog INFO Server Starts - 10.0.0.17:9000
+2019-11-01 12:37:28AM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-11-01 12:37:28AM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'off'}
+2019-11-01 12:37:28AM serverLog INFO {'eventType': 'manual', 'user': 'richard', 'newState': 'on'}
+2019-11-03 02:54:50PM serverLog INFO Server Starts - 10.0.0.17:9000

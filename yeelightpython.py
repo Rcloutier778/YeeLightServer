@@ -7,6 +7,7 @@ import datetime
 import logging
 import json
 import os
+import pickle
 
 HOMEDIR = '/home/richard/YeeLightServer/'
 os.chdir(HOMEDIR)
@@ -40,7 +41,6 @@ __SUNSET_TIME = '5:30:PM'
 __TWILIGHT_TIME = '6:30:PM'
 __SLEEP_TIME = '10:30:PM'
 
-__AUTOSET_NIGHT_RANGE=[]
 #TODO
 """
 1) autoset on wakeup from lan
@@ -107,6 +107,7 @@ def autoset_auto():
         set_IRL_sunset()
     except Exception as e:
         log.error(e, exc_info=True)
+        return
     #Below added to fix bug where this program would crash and burn upon phone reappearing
     #on()
     #autoset(autosetDuration=300)
@@ -114,27 +115,34 @@ def autoset_auto():
 
     #End hack
     try:
-        autoset()
+        autoset(1, autoset_auto_var=True)
     except Exception as e:
         log.error(e, exc_info=True)
-    log.info('Entering loop')
-    while True:
-        phoneFound = checkPing()
 
-        if not phoneFound: #Was 1, now 0
-            log.info("Autoset_auto off")
-            off(True)
-        else: #Was 0, now 1
-            while True:
-                log.info("Autoset_auto on")
-                try:
-                    on()
-                    log.info("After on")
-                    autoset(autosetDuration=300, autoset_auto_var=True)
-                    break
-                except Exception as e:
-                    log.error(e)
-                    log.error(sys.exc_info())
+    systemStartTime = datetime.datetime.utcnow()
+    while True:
+        try:
+            phoneFound = checkPing()
+
+            if not phoneFound: #Was 1, now 0
+                log.info("Autoset_auto off")
+                off(True)
+            else: #Was 0, now 1
+                while True:
+                    log.info("Autoset_auto on")
+                    try:
+                        on()
+                        log.info("After on")
+                        autoset(autosetDuration=300, autoset_auto_var=True)
+                        break
+                    except Exception as e:
+                        log.error(e, exc_info=True)
+        except Exception as e:
+            log.error(e, exc_info=True)
+        finally:
+            if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
+                systemStartTime = datetime.datetime.utcnow()
+                set_IRL_sunset()
 
 
 def resetFromLoggedState():
@@ -365,8 +373,8 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     #set light level when computer is woken up, based on time of day
     rn=datetime.datetime.now() # If there is ever a problem here, just use time.localtime()
     now=datetime.time(rn.hour,rn.minute,0)
-    print('now:',now)
     
+    #log.info(['autoset: ',now])
     dayrange = ["6:15:AM",__SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]: #weekend
         print("weekend")
@@ -374,43 +382,42 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
 
     #TODO Remember to make changes to raspberry pi too!
     duskrange=[dayrange[1],__TWILIGHT_TIME]
-    nightrange=[duskrange[1],"9:30:PM"]
-    sleeprange=[nightrange[1],__SLEEP_TIME]
-    DNDrange=[sleeprange[1],dayrange[0]]
-    
-    
-    timeranges=[dayrange,duskrange,nightrange,sleeprange,DNDrange]
-    
+
+    nightrange=[duskrange[1],__SLEEP_TIME]
+    DNDrange=[nightrange[1],dayrange[0]]
+
+    autosetNightRange = getNightRange()
+
+    timeranges=[dayrange,duskrange,nightrange,DNDrange]
     for r in timeranges:
         for rr in range(0,2):
             t = datetime.datetime.strptime(r[rr], "%I:%M:%p")
             r[rr] = datetime.time(t.hour,t.minute,0)
-            
     if dayrange[0] <= now < dayrange[1]:
-        print("Day")
         log.info("Autoset: Day")
         day(autosetDuration,True)
     elif duskrange[0] <= now < duskrange[1]:
-        print("Dusk")
         log.info("Autoset: Dusk")
         dusk(autosetDuration,True)
-    else:
-        log.info(now)
-        for startTime, endTime, temperature, brightness in __AUTOSET_NIGHT_RANGE:
-            if startTime <= now < endTime:
+    elif nightrange[0] <= now and now < nightrange[1]:
+        for (startTime, endTime, temperature, brightness) in autosetNightRange:
+            if startTime <= now and now < endTime:
                 log.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
                 customTempFlow(temperature,duration = autosetDuration, auto=True,  brightness=brightness)
                 return 0
-    if DNDrange[0] <= now or now < DNDrange[1]:
-        print("dnd")
+    elif DNDrange[0] <= now or now < DNDrange[1]:
         log.info("Autoset: dnd")
         off()
     return 0
 
+def getNightRange():
+    with open(HOMEDIR+'nightTimeRange.pickle','rb') as f:
+        nightTimeRange = pickle.load(f)
+    return nightTimeRange
+
 
 def set_IRL_sunset():
     global __SUNSET_TIME
-    global __AUTOSET_NIGHT_RANGE
     global __TWILIGHT_TIME
     import requests
     import json
@@ -438,14 +445,15 @@ def set_IRL_sunset():
         brightness=80
         startTime = origDict['civil_twilight_end'] + datetime.timedelta(minutes=timeDiff*i//iters)
 
-        endTime = startTime + datetime.timedelta(minutes=timeDiff//iters)
+        endTime = startTime + datetime.timedelta(minutes=1+(timeDiff//iters))
         temperature = __DUSK_COLOR - int(tempDiff*i//iters)
         if temperature < brightnessChangePoint:
             brightness = int(80 * ((iters-i)/iters)) + 20
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
-
-    __AUTOSET_NIGHT_RANGE = returnRange
-    
+    for i in returnRange:
+        log.info(i)
+    with open(HOMEDIR+'nightTimeRange.pickle','wb+') as f:
+        pickle.dump(returnRange, f)
 
 
 if __name__ == "__main__":
