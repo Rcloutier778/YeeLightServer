@@ -179,21 +179,23 @@ def checkPing():
         sleepTime=7
     else:
         sleepTime=0.5
+    MAX_ATTEMPTS=5
     attempts=0
     while True:
         time.sleep(sleepTime)
         phone_response = not bool(os.system("ping -c 1 -W 2 "+phoneIP))
-        pc_response = not bool(os.system("ping -c 1 -W 1 "+pcIP))
+        pc_response = not bool(os.system("ping -c 1 -W 2 "+pcIP))
         if (phone_response == phoneStatus) and (pc_response==pcStatus): #no changes
             attempts=0
             continue
         elif not phone_response: #phone is missing
-            attempts+=1
-            if attempts > 2: #try 3 times 
+            if attempts == MAX_ATTEMPTS: #try until MAX_ATTEMPTS is reached  
                 log.info("Phone missing")
                 pcStatus=pc_response
                 phoneStatus=phone_response
                 return False
+            attempts += 1
+            continue
         elif (not phoneStatus) and phone_response: #phone re-appears
             log.info("Phone re appeared")
             attempts=0
@@ -380,15 +382,13 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
         print("weekend")
         dayrange[0] = "7:30:AM"
 
-    #TODO Remember to make changes to raspberry pi too!
-    duskrange=[dayrange[1],__TWILIGHT_TIME]
 
-    nightrange=[duskrange[1],__SLEEP_TIME]
+    nightrange=[dayrange[1],__SLEEP_TIME]
     DNDrange=[nightrange[1],dayrange[0]]
 
     autosetNightRange = getNightRange()
 
-    timeranges=[dayrange,duskrange,nightrange,DNDrange]
+    timeranges=[dayrange,nightrange,DNDrange]
     for r in timeranges:
         for rr in range(0,2):
             t = datetime.datetime.strptime(r[rr], "%I:%M:%p")
@@ -396,9 +396,6 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     if dayrange[0] <= now < dayrange[1]:
         log.info("Autoset: Day")
         day(autosetDuration,True)
-    elif duskrange[0] <= now < duskrange[1]:
-        log.info("Autoset: Dusk")
-        dusk(autosetDuration,True)
     elif nightrange[0] <= now and now < nightrange[1]:
         for (startTime, endTime, temperature, brightness) in autosetNightRange:
             if startTime <= now and now < endTime:
@@ -436,7 +433,7 @@ def set_IRL_sunset():
     __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
     __TWILIGHT_TIME = origDict['civil_twilight_end'].strftime("%I:%M:%p")
     returnRange = []
-    iters = 20 #number of iters to calc on 
+    iters = 40 #number of iters to calc on 
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR #temp difference between sunset and sleep
     brightnessChangePoint = __DUSK_COLOR - (3*tempDiff//4) #when to start changing brightness
     timeDiff = (datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") -origDict['civil_twilight_end']).total_seconds()//60 #minutes between AFTER sunset and sleep
