@@ -182,7 +182,8 @@ def checkPing():
         sleepTime = 7
     else:
         sleepTime = 0.5
-    MAX_ATTEMPTS = 5
+    MAX_PHONE_ATTEMPTS = 5
+    MAX_PC_ATTEMPTS = 2
     attempts = 0
     while True:
         time.sleep(sleepTime)
@@ -192,7 +193,7 @@ def checkPing():
             attempts = 0
             continue
         elif not phone_response:  # phone is missing
-            if attempts == MAX_ATTEMPTS:  # try until MAX_ATTEMPTS is reached
+            if attempts == MAX_PHONE_ATTEMPTS:  # try until MAX_PHONE_ATTEMPTS is reached
                 log.info("Phone missing")
                 pcStatus = pc_response
                 phoneStatus = phone_response
@@ -211,10 +212,12 @@ def checkPing():
             phoneStatus = phone_response
             return True
         elif phoneStatus and pcStatus and not pc_response:  # if pc turns off
-            log.info("PC turned off")
-            pcStatus = pc_response
-            phoneStatus = phone_response
-            return False
+            if attempts == MAX_PC_ATTEMPTS:
+                log.info("PC turned off")
+                pcStatus = pc_response
+                phoneStatus = phone_response
+                return False
+            attempts += 1
 
 
 def writeManualOverride():
@@ -395,10 +398,10 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     now = datetime.time(rn.hour, rn.minute, 0)
     
     # log.info(['autoset: ',now])
-    dayrange = ["6:15:AM", __SUNSET_TIME]
+    dayrange = ["7:00:AM", __SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]:  # weekend
         print("weekend")
-        dayrange[0] = "7:30:AM"
+        dayrange[0] = "8:00:AM"
     
     nightrange = [dayrange[1], __SLEEP_TIME]
     DNDrange = [nightrange[1], dayrange[0]]
