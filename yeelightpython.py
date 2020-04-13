@@ -459,18 +459,24 @@ def set_IRL_sunset():
     brightnessChangePoint = __DUSK_COLOR - (3 * tempDiff // 4)  # when to start changing brightness
     timeDiff = (datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") - origDict[
         'civil_twilight_end']).total_seconds() // 60  # minutes between AFTER sunset and sleep
-    
+
+    brightnessDecreaseIterNum =0 # None #The iteration where the brightness starts decreasing. 
+
     for i in range(iters + 1):
         brightness = 80
         startTime = origDict['civil_twilight_end'] + datetime.timedelta(minutes=timeDiff * i // iters)
         
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = __DUSK_COLOR - int(tempDiff * i // iters)
+        log.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
         if temperature < brightnessChangePoint:
-            brightness = int(80 * ((iters - i) / iters)) + 20
+            if not brightnessDecreaseIterNum:
+                brightnessDecreaseIterNum = i
+            brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum)))# + 20
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
-    for i in returnRange:
-        log.info(i)
+    for startTime, endTime, temp, brightness in returnRange:
+        log.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S'), endTime.strftime('%I:%M:%S'), temp, brightness))
+        #log.info(i)
     with open(HOMEDIR + 'nightTimeRange.pickle', 'wb+') as f:
         pickle.dump(returnRange, f)
 
