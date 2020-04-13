@@ -113,7 +113,8 @@ def autoset_auto():
     # on()
     # autoset(autosetDuration=300)
     resetFromLoggedState()
-    
+    log.info(__SUNSET_TIME) 
+    log.info(__TWILIGHT_TIME)
     # End hack
     try:
         autoset(1, autoset_auto_var=True)
@@ -422,6 +423,8 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
                 log.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
                 customTempFlow(temperature, duration=autosetDuration, auto=True, brightness=brightness)
                 return 0
+        else:
+            log.warn("Didn't find applicable range!!!")
     elif DNDrange[0] <= now or now < DNDrange[1]:
         log.info("Autoset: dnd")
         off()
@@ -457,8 +460,13 @@ def set_IRL_sunset():
     iters = 40  # number of iters to calc on
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR  # temp difference between sunset and sleep
     brightnessChangePoint = __DUSK_COLOR - (3 * tempDiff // 4)  # when to start changing brightness
-    timeDiff = (datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") - origDict[
-        'civil_twilight_end']).total_seconds() // 60  # minutes between AFTER sunset and sleep
+    timeDiff = (datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p").time()) - datetime.datetime.combine(datetime.date.today(),origDict[
+        'civil_twilight_end'].time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
+
+    log.info('__SLEEP_TIME: %s' % __SLEEP_TIME)
+    log.info('civil_twilight_end: %s' % origDict['civil_twilight_end'].strftime('%I:%M:%p'))
+
+    log.info('timeDiff: %s' % (timeDiff))
 
     brightnessDecreaseIterNum =0 # None #The iteration where the brightness starts decreasing. 
 
@@ -472,10 +480,10 @@ def set_IRL_sunset():
         if temperature < brightnessChangePoint:
             if not brightnessDecreaseIterNum:
                 brightnessDecreaseIterNum = i
-            brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum)))# + 20
+            brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum))) 
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
     for startTime, endTime, temp, brightness in returnRange:
-        log.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S'), endTime.strftime('%I:%M:%S'), temp, brightness))
+        log.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
         #log.info(i)
     with open(HOMEDIR + 'nightTimeRange.pickle', 'wb+') as f:
         pickle.dump(returnRange, f)
