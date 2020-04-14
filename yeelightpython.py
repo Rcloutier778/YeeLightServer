@@ -12,7 +12,7 @@ import pickle
 HOMEDIR = '/home/richard/YeeLightServer/'
 os.chdir(HOMEDIR)
 
-log = logging.getLogger('log')
+logger = logging.getLogger('log')
 logging.basicConfig(filename=HOMEDIR + 'log.log',
                     filemode='a',
                     format='%(asctime)s %(name)s %(levelname)s %(message)s',
@@ -62,13 +62,13 @@ def main():
     response=subprocess.getstatusoutput('ping -n 2 10.0.0.7')
     if 'time=' not in response[1]: #timeout, phone not present.
         print("Phone not present.")
-        log.warning("Phone not present.")
+        logger.warning("Phone not present.")
         off()
         return
     '''
     if len(sys.argv) == 1:
         print("No arguments.")
-        log.warning('No arguments.')
+        logger.warning('No arguments.')
         return
     else:
         cmd = sys.argv[1].lower()
@@ -77,7 +77,7 @@ def main():
         if cmd in allcommands:
             if cmd in commands:
                 if 'autoset' not in cmd:
-                    log.info(cmd)
+                    logger.info(cmd)
                 
                 if usr == 'richard':
                     user = 'richard'
@@ -103,23 +103,23 @@ def main():
 
 
 def autoset_auto():
-    log.error("Boot autoset_auto")
+    logger.error("Boot autoset_auto")
     try:
         set_IRL_sunset()
     except Exception as e:
-        log.error(e, exc_info=True)
+        logger.error(e, exc_info=True)
         return
     # Below added to fix bug where this program would crash and burn upon phone reappearing
     # on()
     # autoset(autosetDuration=300)
     resetFromLoggedState()
-    log.info(__SUNSET_TIME) 
-    log.info(__TWILIGHT_TIME)
+    logger.info(__SUNSET_TIME)
+    logger.info(__TWILIGHT_TIME)
     # End hack
     try:
         autoset(1, autoset_auto_var=True)
     except Exception as e:
-        log.error(e, exc_info=True)
+        logger.error(e, exc_info=True)
     
     systemStartTime = datetime.datetime.utcnow()
     while True:
@@ -128,20 +128,20 @@ def autoset_auto():
             phoneFound = checkPing()
             
             if not phoneFound:  # Was 1, now 0
-                log.info("Autoset_auto off")
+                logger.info("Autoset_auto off")
                 off(True)
             else:  # Was 0, now 1
                 while True:
-                    log.info("Autoset_auto on")
+                    logger.info("Autoset_auto on")
                     try:
                         on()
-                        log.info("After on")
+                        logger.info("After on")
                         autoset(autosetDuration=300, autoset_auto_var=True)
                         break
                     except Exception as e:
-                        log.error(e, exc_info=True)
+                        logger.error(e, exc_info=True)
         except Exception as e:
-            log.error(e, exc_info=True)
+            logger.error(e, exc_info=True)
         finally:
             if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
                 systemStartTime = datetime.datetime.utcnow()
@@ -195,26 +195,26 @@ def checkPing():
             continue
         elif not phone_response:  # phone is missing
             if attempts == MAX_PHONE_ATTEMPTS:  # try until MAX_PHONE_ATTEMPTS is reached
-                log.info("Phone missing")
+                logger.info("Phone missing")
                 pcStatus = pc_response
                 phoneStatus = phone_response
                 return False
             attempts += 1
             continue
         elif (not phoneStatus) and phone_response:  # phone re-appears
-            log.info("Phone re appeared")
+            logger.info("Phone re appeared")
             attempts = 0
             pcStatus = pc_response
             phoneStatus = phone_response
             return True
         elif phone_response and pc_response and not pcStatus:  # if pc turns on
-            log.info('PC turned on')
+            logger.info('PC turned on')
             pcStatus = pc_response
             phoneStatus = phone_response
             return True
         elif phoneStatus and pcStatus and not pc_response:  # if pc turns off
             if attempts == MAX_PC_ATTEMPTS:
-                log.info("PC turned off")
+                logger.info("PC turned off")
                 pcStatus = pc_response
                 phoneStatus = phone_response
                 return False
@@ -300,7 +300,7 @@ def off(auto=False):
         if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
                 hours=1) > datetime.datetime.utcnow():
             print("SystemTray used recently, canceling autoset")
-            log.info("SystemTray used recently, canceling autoset")
+            logger.info("SystemTray used recently, canceling autoset")
             return -1
     
     writeState('off')
@@ -380,7 +380,7 @@ def logon():
 
 def autoset(autosetDuration=300000, autoset_auto_var=False):
     if all(x.get_properties()['power'] == 'off' for x in bulbs):
-        log.info('Power is off, cancelling autoset')
+        logger.info('Power is off, cancelling autoset')
         return -1
     
     # If what called autoset is not a checkping event
@@ -391,14 +391,14 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
         if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
                 hours=1) > datetime.datetime.utcnow():
             print("SystemTray used recently, canceling autoset")
-            log.info("SystemTray used recently, canceling autoset")
+            logger.info("SystemTray used recently, canceling autoset")
             return -1
     
     # set light level when computer is woken up, based on time of day
     rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
     now = datetime.time(rn.hour, rn.minute, 0)
     
-    # log.info(['autoset: ',now])
+    # logger.info(['autoset: ',now])
     dayrange = ["7:00:AM", __SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]:  # weekend
         print("weekend")
@@ -415,18 +415,18 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
             t = datetime.datetime.strptime(r[rr], "%I:%M:%p")
             r[rr] = datetime.time(t.hour, t.minute, 0)
     if dayrange[0] <= now < dayrange[1]:
-        log.info("Autoset: Day")
+        logger.info("Autoset: Day")
         day(autosetDuration, True)
     elif nightrange[0] <= now and now < nightrange[1]:
         for (startTime, endTime, temperature, brightness) in autosetNightRange:
             if startTime <= now and now < endTime:
-                log.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
+                logger.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
                 customTempFlow(temperature, duration=autosetDuration, auto=True, brightness=brightness)
                 return 0
         else:
-            log.warn("Didn't find applicable range!!!")
+            logger.warn("Didn't find applicable range!!!")
     elif DNDrange[0] <= now or now < DNDrange[1]:
-        log.info("Autoset: dnd")
+        logger.info("Autoset: dnd")
         off()
     return 0
 
@@ -463,10 +463,10 @@ def set_IRL_sunset():
     timeDiff = (datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p").time()) - datetime.datetime.combine(datetime.date.today(),origDict[
         'civil_twilight_end'].time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
 
-    log.info('__SLEEP_TIME: %s' % __SLEEP_TIME)
-    log.info('civil_twilight_end: %s' % origDict['civil_twilight_end'].strftime('%I:%M:%p'))
+    logger.info('__SLEEP_TIME: %s' % __SLEEP_TIME)
+    logger.info('civil_twilight_end: %s' % origDict['civil_twilight_end'].strftime('%I:%M:%p'))
 
-    log.info('timeDiff: %s' % (timeDiff))
+    logger.info('timeDiff: %s' % (timeDiff))
 
     brightnessDecreaseIterNum =0 # None #The iteration where the brightness starts decreasing. 
 
@@ -476,15 +476,15 @@ def set_IRL_sunset():
         
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = __DUSK_COLOR - int(tempDiff * i // iters)
-        log.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
+        logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
         if temperature < brightnessChangePoint:
             if not brightnessDecreaseIterNum:
                 brightnessDecreaseIterNum = i
             brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum))) 
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
     for startTime, endTime, temp, brightness in returnRange:
-        log.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
-        #log.info(i)
+        logger.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
+        #logger.info(i)
     with open(HOMEDIR + 'nightTimeRange.pickle', 'wb+') as f:
         pickle.dump(returnRange, f)
 
