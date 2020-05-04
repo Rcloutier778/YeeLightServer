@@ -429,6 +429,7 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
             logger.warn(DNDrange)
             logger.warn(now)
             logger.warn(__SUNSET_TIME)
+            logger.warn(__SLEEP_TIME)
     elif DNDrange[0] <= now or now < DNDrange[1]:
         logger.info("Autoset: dnd")
         off()
@@ -451,6 +452,7 @@ def getCalcTimes():
 
 def set_IRL_sunset():
     global __SUNSET_TIME
+    import re
     import requests
     import json
     import pytz
@@ -459,20 +461,22 @@ def set_IRL_sunset():
     r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677')
     assert r.status_code == 200
     origDict = json.loads(r.text)['results']
-    newDict = {}
-    for key in ['sunset', 'civil_twilight_end']:
+    for key in origDict:
+        if not re.match(r'\d+:\d+:\d+ \w\w',origDict[key]):
+            continue
         ogTime = datetime.datetime.strptime(origDict[key], "%I:%M:%S %p")
         localTime = pytz.utc.localize(ogTime).astimezone(pytz.timezone('US/Eastern'))
         localTime = localTime.replace(tzinfo=None)
         origDict[key] = localTime  # .strftime("%I:%M:%S %p")
+        logger.info('%s: %s', key, origDict[key].strftime("%I:%M:%S %p"))
     __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
     returnRange = []
     iters = 40  # number of iters to calc on
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR  # temp difference between sunset and sleep
     brightnessChangePoint = __DUSK_COLOR - (3 * tempDiff // 4)  # when to start changing brightness
-    timeDiff = (datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p").time()) - datetime.datetime.combine(datetime.date.today(),origDict[
-        'civil_twilight_end'].time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
+    timeDiff = (datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p").time()) - datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SUNSET_TIME, "%I:%M:%p").time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
 
+    logger.info('__SUNSET_TIME: %s' % __SUNSET_TIME)
     logger.info('__SLEEP_TIME: %s' % __SLEEP_TIME)
     logger.info('civil_twilight_end: %s' % origDict['civil_twilight_end'].strftime('%I:%M:%p'))
 
@@ -480,21 +484,19 @@ def set_IRL_sunset():
 
     brightnessDecreaseIterNum =0 # None #The iteration where the brightness starts decreasing. 
 
-    for i in range(iters + 1):
+    for i in range(iters):
         brightness = 80
         startTime = origDict['sunset'] + datetime.timedelta(minutes=timeDiff * i // iters)
-        
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = __DUSK_COLOR - int(tempDiff * i // iters)
-        logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
+        #logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
         if temperature < brightnessChangePoint:
             if not brightnessDecreaseIterNum:
                 brightnessDecreaseIterNum = i
-            brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum))) 
+            brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum)))
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
     for startTime, endTime, temp, brightness in returnRange:
         logger.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
-        #logger.info(i)
     with open(HOMEDIR + 'nightTimeRange.pickle', 'wb+') as f:
         pickle.dump(returnRange, f)
     with open(HOMEDIR + 'calcTimes.pickle', 'wb+') as f:
