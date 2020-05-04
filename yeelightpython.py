@@ -38,7 +38,6 @@ __DUSK_COLOR = 3300
 __NIGHT_COLOR = 2500
 __SLEEP_COLOR = 1500
 __SUNSET_TIME = '5:30:PM'
-__TWILIGHT_TIME = '6:30:PM'
 __SLEEP_TIME = '10:30:PM'
 
 # TODO
@@ -114,7 +113,6 @@ def autoset_auto():
     # autoset(autosetDuration=300)
     resetFromLoggedState()
     logger.info(__SUNSET_TIME)
-    logger.info(__TWILIGHT_TIME)
     # End hack
     try:
         autoset(1, autoset_auto_var=True)
@@ -126,7 +124,7 @@ def autoset_auto():
         try:
             # noinspection PyPep8Naming
             phoneFound = checkPing()
-            
+            logger.info(__SUNSET_TIME)
             if not phoneFound:  # Was 1, now 0
                 logger.info("Autoset_auto off")
                 off(True)
@@ -393,7 +391,8 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
             print("SystemTray used recently, canceling autoset")
             logger.info("SystemTray used recently, canceling autoset")
             return -1
-    
+    getCalcTimes()
+
     # set light level when computer is woken up, based on time of day
     rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
     now = datetime.time(rn.hour, rn.minute, 0)
@@ -408,7 +407,7 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     DNDrange = [nightrange[1], dayrange[0]]
     
     autosetNightRange = getNightRange()
-    
+     
     timeranges = [dayrange, nightrange, DNDrange]
     for r in timeranges:
         for rr in range(0, 2):
@@ -425,6 +424,11 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
                 return 0
         else:
             logger.warn("Didn't find applicable range!!!")
+            logger.warn(dayrange)
+            logger.warn(nightrange)
+            logger.warn(DNDrange)
+            logger.warn(now)
+            logger.warn(__SUNSET_TIME)
     elif DNDrange[0] <= now or now < DNDrange[1]:
         logger.info("Autoset: dnd")
         off()
@@ -436,10 +440,17 @@ def getNightRange():
         nightTimeRange = pickle.load(f)
     return nightTimeRange
 
+def getCalcTimes():
+    global __SUNSET_TIME
+    global __SLEEP_TIME
+    with open(HOMEDIR + 'calcTimes.pickle', 'rb') as f:
+        calcTimes = pickle.load(f)
+        __SUNSET_TIME = calcTimes['sunsetTime']
+
+    
 
 def set_IRL_sunset():
     global __SUNSET_TIME
-    global __TWILIGHT_TIME
     import requests
     import json
     import pytz
@@ -455,7 +466,6 @@ def set_IRL_sunset():
         localTime = localTime.replace(tzinfo=None)
         origDict[key] = localTime  # .strftime("%I:%M:%S %p")
     __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
-    __TWILIGHT_TIME = origDict['civil_twilight_end'].strftime("%I:%M:%p")
     returnRange = []
     iters = 40  # number of iters to calc on
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR  # temp difference between sunset and sleep
@@ -472,7 +482,7 @@ def set_IRL_sunset():
 
     for i in range(iters + 1):
         brightness = 80
-        startTime = origDict['civil_twilight_end'] + datetime.timedelta(minutes=timeDiff * i // iters)
+        startTime = origDict['sunset'] + datetime.timedelta(minutes=timeDiff * i // iters)
         
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = __DUSK_COLOR - int(tempDiff * i // iters)
@@ -487,6 +497,8 @@ def set_IRL_sunset():
         #logger.info(i)
     with open(HOMEDIR + 'nightTimeRange.pickle', 'wb+') as f:
         pickle.dump(returnRange, f)
+    with open(HOMEDIR + 'calcTimes.pickle', 'wb+') as f:
+        pickle.dump({'sunsetTime':__SUNSET_TIME},f)
 
 
 if __name__ == "__main__":
