@@ -458,14 +458,16 @@ def set_IRL_sunset():
     import pytz
     import datetime
     import math
-    r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677')
+    r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0')
     assert r.status_code == 200
     origDict = json.loads(r.text)['results']
     for key in origDict:
-        if not re.match(r'\d+:\d+:\d+ \w\w',origDict[key]):
+        if not isinstance(origDict[key],str) or not re.match(
+            r'\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\+\d\d:\d\d',
+            origDict[key]):
             continue
-        ogTime = datetime.datetime.strptime(origDict[key], "%I:%M:%S %p")
-        localTime = pytz.utc.localize(ogTime).astimezone(pytz.timezone('US/Eastern'))
+        ogTime = datetime.datetime.strptime(origDict[key], "%Y-%m-%dT%H:%M:%S%z")
+        localTime = ogTime.astimezone(pytz.timezone('US/Eastern'))
         localTime = localTime.replace(tzinfo=None)
         origDict[key] = localTime  # .strftime("%I:%M:%S %p")
         logger.info('%s: %s', key, origDict[key].strftime("%I:%M:%S %p"))
