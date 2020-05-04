@@ -1,11 +1,20 @@
+import pickle
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import argparse
 import logging
 import json
 import os
+from yeelightpython import __DAY_COLOR, __DUSK_COLOR, __NIGHT_COLOR, __SLEEP_COLOR
 import datetime
 
+HOMEDIR= '/home/richard/YeeLightServer/'
+logger = logging.getLogger('serverLog')
+logging.basicConfig(filename='/home/richard/YeeLightServer/serverLog.log',
+                        filemode='a',
+                        format = '%(asctime)s %(name)s %(levelname)s %(message)s',
+                        datefmt='%Y-%m-%d %I:%M:%S%p',
+                        level=logging.INFO)
 
 class MyHandler(BaseHTTPRequestHandler):
     def _set_headers(self):
@@ -20,16 +29,13 @@ class MyHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         paths = {
-            '/foo': {'status': 200},
-            '/bar': {'status': 302},
-            '/baz': {'status': 404},
-            '/qux': {'status': 500}
+            '/panel': {'status': 200}
         }
 
         if self.path in paths:
             self.respond(paths[self.path])
-            
         else:
+            logger.info('Not in path')
             self.respond({'status': 500})
             
     def do_POST(self):
@@ -66,51 +72,94 @@ class MyHandler(BaseHTTPRequestHandler):
         #self.end_headers()
         #print("{}".format(self.data_string))
         return
-    
+     
     def handle_http(self, status_code, path):
         self.send_response(status_code)
         self.send_header('Content-type', 'text/html')
         self.end_headers()
-        if path=='/color':
-            content=self.colorPicker()
-        else:
-            content = '''
-            <html><head><title>Title goes here.</title></head>
-            <body><p>This is a test.</p>
-            <p>You accessed path: {}</p>
-            </body></html>
-            '''.format(path)
+        try:
+            if path == '/panel':
+                import base64
+                with open(HOMEDIR + 'favicon.ico', 'rb') as f:
+                    img = base64.b64encode(f.read()).decode()
+                content = '''
+<html><head>
+<title>Panel GUI</title>
+<link rel="icon" href="data:image/x-icon;base64,%s" type="image/x-icon"/>
+</head>
+<body>%%s
+</body></html>\n''' % img
+                doc = GET_panel()
+                content = content % ('<br>\n'.join(str(x) for x in doc))
+            else:
+                content = '''
+                <html><head><title>Title goes here.</title></head>
+                <body><p>This is a test.</p>
+                <p>badPath</p>
+                </body></html>
+                '''
+        except Exception:
+            logger.error( 'Got exception ', exc_info=True)
+            content='<html><head><title>Panel GUI</title></head>\n<body>GOT ERROR!\n</body></html>\n'
+
         return bytes(content, 'UTF-8')
-
-    
-    def colorPicker(self):
-        content='''
-        
-        <html>
-        <body>
-        
-        <h2>Color Picker</h2>
-        <p>The <strong>input type="color"</strong> is used for input fields that should contain a color.</p>
-        <p>Depending on browser support:<br>A color picker can pop-up when you enter the input field.</p>
-        
-        <form action="/action_page" method="post">
-          Select your favorite color:
-          <input type="color" name="favcolor">
-          <input type="submit" value="Submit">
-        </form>
-        
-        <p><b>Note:</b> type="color" is not supported in Internet Explorer 11 and earlier versions or Safari 9.1 and earlier versions.</p>
-        
-        </body>
-        </html>
-        '''
-        
-        return content
-
 
     def respond(self, opts):
         response = self.handle_http(opts['status'], self.path)
         self.wfile.write(response)
+
+
+def GET_panel():
+    doc = []
+    #PC/Phone status
+    with open(HOMEDIR + 'bulbStateLog', 'r') as f:
+        bulbState = json.load(f)
+
+    def onlineOffline(key):
+        return '<p style="color:green">Online</p>' if bulbState[key] else '<p style="color:red">Offline</p>'
+    doc.append('''<table><tr><td>PC</td><td>Phone</td></tr><tr><td>%s</td><td>%s</td></tr></table>''' % (onlineOffline('pcStatus'),onlineOffline('phoneStatus')))
+
+    #Bulb State
+    currBulb = 'Bulb state: '
+    if 'custom:' in bulbState['state']:
+        currBulb += 'custom Temperature:%sK Brightness:%s' % (bublState['state'].split(':')[1:])
+    else:
+        currBulb += bulbState['state']
+    doc.append(currBulb)
+
+    
+    with open(HOMEDIR + 'calcTimes.pickle', 'rb') as f:
+        calcTimes = pickle.load(f)
+    doc.append(calcTimes)
+    with open(HOMEDIR + 'nightTimeRange.pickle', 'rb') as f:
+        nightTimeRange = pickle.load(f)
+    doc.append(nightTimeRange)
+    with open(HOMEDIR + 'richard_manualOverride.txt') as f:
+        manualOverrideTime = f.read()
+    doc.append(manualOverrideTime)
+
+
+
+
+
+
+
+
+    return doc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -125,13 +174,7 @@ if __name__ == '__main__':
         HOST_NAME = '10.0.0.17'
         PORT_NUMBER = 9000
     
-    logger = logging.getLogger('serverLog')
-    logging.basicConfig(filename='/home/richard/YeeLightServer/serverLog.log',
-                        filemode='a',
-                        format = '%(asctime)s %(name)s %(levelname)s %(message)s',
-                        datefmt='%Y-%m-%d %I:%M:%S%p',
-                        level=logging.INFO)
-
+    
     server_class = HTTPServer
     httpd = server_class((HOST_NAME, PORT_NUMBER), MyHandler)
     logger.info('Server Starts - %s:%s' % (HOST_NAME, PORT_NUMBER))
