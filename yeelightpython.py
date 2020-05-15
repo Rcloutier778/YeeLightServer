@@ -13,11 +13,18 @@ HOMEDIR = '/home/richard/YeeLightServer/'
 os.chdir(HOMEDIR)
 
 logger = logging.getLogger('log')
-logging.basicConfig(filename=HOMEDIR + 'log.log',
-                    filemode='a',
-                    format='%(asctime)s %(name)s %(levelname)s %(message)s',
-                    datefmt='%Y-%m-%d %I:%M:%S%p',
-                    level=logging.INFO)
+logger.setLevel(logging.INFO)
+fh = logging.FileHandler(HOMEDIR + 'log.log', 'a+')
+fh.setLevel(logging.INFO)
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+fh.setFormatter(formatter)
+logger.addHandler(fh)
+
+#logging.basicConfig(filename=HOMEDIR + 'log.log',
+#                    filemode='a+',
+#                    format='%(asctime)s %(levelname)s %(message)s',
+#                    datefmt='%Y-%m-%d %I:%M:%S%p',
+#                    level=logging.INFO)
 
 richard_bulb_ips = ["10.0.0.5", "10.0.0.10", "10.0.0.15"]
 bulbs = []
@@ -37,6 +44,8 @@ __DAY_COLOR = 4000
 __DUSK_COLOR = 3300
 __NIGHT_COLOR = 2500
 __SLEEP_COLOR = 1500
+__SUNRISE_TIME = '6:50:AM'
+__WEEKEND_SUNRISE_TIME = '8:00:AM'
 __SUNSET_TIME = '5:30:PM'
 __SLEEP_TIME = '10:30:PM'
 
@@ -170,8 +179,8 @@ def resetFromLoggedState():
     elif state == 'color':
         pass  # Color is being manually manipulated, don't touch
     elif 'custom:' in state:
-        temperature = int(state.split(':')[1])
-        customTempFlow(temperature)
+        temperature,brightness = int(state.split(':')[1:])
+        customTempFlow(temperature, brightness=brightness)
 
 
 def checkPing():
@@ -284,7 +293,7 @@ def sleep(duration=3000, auto=False):
 
 
 def customTempFlow(temperature, duration=3000, auto=False, brightness=80):
-    writeState('custom:%d' % temperature)
+    writeState('custom:%d:%d' % (temperature, brightness,))
     if not auto:
         on()
     colorTempFlow(temperature, duration, brightness)
@@ -398,10 +407,10 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     now = datetime.time(rn.hour, rn.minute, 0)
     
     # logger.info(['autoset: ',now])
-    dayrange = ["7:00:AM", __SUNSET_TIME]
+    dayrange = [__SUNRISE_TIME, __SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]:  # weekend
         print("weekend")
-        dayrange[0] = "8:00:AM"
+        dayrange[0] = __WEEKEND_SUNRISE_TIME
     
     nightrange = [dayrange[1], __SLEEP_TIME]
     DNDrange = [nightrange[1], dayrange[0]]
@@ -469,9 +478,10 @@ def set_IRL_sunset():
         ogTime = datetime.datetime.strptime(origDict[key], "%Y-%m-%dT%H:%M:%S%z")
         localTime = ogTime.astimezone(pytz.timezone('US/Eastern'))
         localTime = localTime.replace(tzinfo=None)
-        origDict[key] = localTime  # .strftime("%I:%M:%S %p")
+        origDict[key] = localTime
         logger.info('%s: %s', key, origDict[key].strftime("%I:%M:%S %p"))
     __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
+
     returnRange = []
     iters = 40  # number of iters to calc on
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR  # temp difference between sunset and sleep
@@ -492,7 +502,7 @@ def set_IRL_sunset():
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = __DUSK_COLOR - int(tempDiff * i // iters)
         #logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
-        if temperature < brightnessChangePoint:
+        if startTime >= origDict['nautical_twilight_end']:  # temperature < brightnessChangePoint:
             if not brightnessDecreaseIterNum:
                 brightnessDecreaseIterNum = i
             brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum)))
