@@ -136,27 +136,28 @@ def GET_panel():
 
     #Bulb State
     currBulb = 'Bulb state: %s Temperature: %sK Brightness: %s%%'
+    stateTranslation = {'day': ['day',__DAY_COLOR, 80], 'dusk':['dusk',__DUSK_COLOR,80], 'night':['night',__NIGHT_COLOR, 60], 'sleep':['sleep',__SLEEP_COLOR, 20]}
     if 'custom:' in bulbState['state']:
         currBulb = currBulb % ('custom',bulbState['state'].split(':')[1:])
+    elif bulbState['state'] in stateTranslation:
+        currBulb = currBulb % stateTranslation.get(bulbState['state'])
     else:
-        currBulb += bulbState['state']
+        currBulb = bulbState['state']
     doc.append(currBulb)
     
+    #Temperature plot
     temperaturePlotPic = os.path.join(HOMEDIR,'temperaturePlot.png')
-
     if not lastPlot or (datetime.datetime.today() - lastPlot).days > 3 or not os.path.exists(temperaturePlotPic):
         lastPlot = datetime.datetime.today()
-
         with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
             calcTimes = pickle.load(f)
         with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'rb') as f:
             nightTimeRange = pickle.load(f)
-
         createPlot(nightTimeRange, calcTimes)
     doc.append('<img src="data:image/png;base64, %s">' % (base64.b64encode(open(temperaturePlotPic,'rb').read()).decode('utf-8')))
 
     with open(os.path.join(HOMEDIR, 'richard_manualOverride.txt')) as f:
-        manualOverrideTime = f.read()
+        manualOverrideTime = datetime.datetime.strptime(f.read(), '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %I:%M:%S %p')
     doc.append(manualOverrideTime)
     
     return doc
