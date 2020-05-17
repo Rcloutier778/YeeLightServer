@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import argparse
 import logging
 import json
+import html
 import datetime
 import matplotlib.pyplot as plt
 import os
@@ -111,9 +112,9 @@ class MyHandler(BaseHTTPRequestHandler):
                 <p>badPath</p>
                 </body></html>
                 '''
-        except Exception:
+        except Exception as e:
             logger.error( 'Got exception ', exc_info=True)
-            content='<html><head><title>Panel GUI</title></head>\n<body>GOT ERROR!\n</body></html>\n'
+            content='<html><head><title>Panel GUI</title></head>\n<body>GOT ERROR!<br>%s\n</body></html>\n' % html.escape(e)
 
         return bytes(content, 'UTF-8')
 
