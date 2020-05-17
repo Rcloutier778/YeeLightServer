@@ -136,11 +136,11 @@ def GET_panel():
 
     #Bulb State
     currBulb = 'Bulb state: %s Temperature: %sK Brightness: %s%%'
-    stateTranslation = {'day': ['day',__DAY_COLOR, 80], 'dusk':['dusk',__DUSK_COLOR,80], 'night':['night',__NIGHT_COLOR, 60], 'sleep':['sleep',__SLEEP_COLOR, 20]}
+    stateTranslation = {'day': ('day',__DAY_COLOR, 80,), 'dusk':('dusk',__DUSK_COLOR,80,), 'night':('night',__NIGHT_COLOR, 60,), 'sleep':('sleep',__SLEEP_COLOR, 20,)}
     if 'custom:' in bulbState['state']:
         currBulb = currBulb % ('custom',bulbState['state'].split(':')[1:])
     elif bulbState['state'] in stateTranslation:
-        currBulb = currBulb % stateTranslation.get(bulbState['state'])
+        currBulb = currBulb % stateTranslation[bulbState['state']]
     else:
         currBulb = bulbState['state']
     doc.append(currBulb)
