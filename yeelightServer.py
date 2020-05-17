@@ -66,7 +66,7 @@ class MyHandler(BaseHTTPRequestHandler):
         logger.info(data)
         try:
             if data["eventType"]=='manual':
-                with open(os.path.join(HOMEDIR, data['user'], '_manualOverride.txt'),'w+') as f:
+                with open(os.path.join(HOMEDIR, data['user'] + '_manualOverride.txt'),'w+') as f:
                     f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
                 with open(os.path.join(HOMEDIR, 'bulbStateLog'),'r+') as f:
                     jdict = json.load(f)
@@ -135,9 +135,9 @@ def GET_panel():
     doc.append('''<table><tr><td>PC</td><td>Phone</td></tr><tr><td>%s</td><td>%s</td></tr></table>''' % (onlineOffline('pcStatus'),onlineOffline('phoneStatus')))
 
     #Bulb State
-    currBulb = 'Bulb state: '
+    currBulb = 'Bulb state: %s Temperature: %sK Brightness: %s%%'
     if 'custom:' in bulbState['state']:
-        currBulb += 'custom Temperature:%sK Brightness:%s' % (bulbState['state'].split(':')[1:])
+        currBulb = currBulb % ('custom',bulbState['state'].split(':')[1:])
     else:
         currBulb += bulbState['state']
     doc.append(currBulb)
