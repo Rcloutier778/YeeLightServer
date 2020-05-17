@@ -148,7 +148,7 @@ def GET_panel():
 
         with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
             calcTimes = pickle.load(f)
-        with open(HOMEDIR + 'nightTimeRange.pickle', 'rb') as f:
+        with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'rb') as f:
             nightTimeRange = pickle.load(f)
 
         createPlot(nightTimeRange, calcTimes)
