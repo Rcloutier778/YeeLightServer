@@ -7,12 +7,14 @@ import json
 import datetime
 import matplotlib.pyplot as plt
 import os
+import os.path
 import io
 import base64
+import platform
 from yeelightpython import __DAY_COLOR, __DUSK_COLOR, __NIGHT_COLOR, __SLEEP_COLOR, __SUNRISE_TIME, __WEEKEND_SUNRISE_TIME, __SLEEP_TIME
 
 
-HOMEDIR= '/home/richard/YeeLightServer/'
+HOMEDIR = '/home/richard/YeeLightServer' if 'Linux' in platform.platform() else os.getcwd()
 lastPlot = None
 #logging.basicConfig(filename=HOMEDIR+'serverLog.log',
 #                    filemode='a+',
@@ -23,7 +25,7 @@ lastPlot = None
 
 logger = logging.getLogger('serverLog')
 logger.setLevel(logging.INFO)
-fh = logging.FileHandler(HOMEDIR + 'serverLog.log', 'a+')
+fh = logging.FileHandler(os.path.join(HOMEDIR, 'serverLog.log'), 'a+')
 fh.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 fh.setFormatter(formatter)
@@ -63,9 +65,9 @@ class MyHandler(BaseHTTPRequestHandler):
         logger.info(data)
         try:
             if data["eventType"]=='manual':
-                with open(HOMEDIR + data['user'] +'_manualOverride.txt','w+') as f:
+                with open(os.path.join(HOMEDIR, data['user'], '_manualOverride.txt'),'w+') as f:
                     f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
-                with open(HOMEDIR + 'bulbStateLog','r+') as f:
+                with open(os.path.join(HOMEDIR, 'bulbStateLog'),'r+') as f:
                     jdict = json.load(f)
                     jdict['state'] = data["newState"]
                     f.seek(0)
@@ -91,7 +93,7 @@ class MyHandler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             if path == '/panel':
-                with open(HOMEDIR + 'favicon.ico', 'rb') as f:
+                with open(os.path.join(HOMEDIR, 'favicon.ico'), 'rb') as f:
                     img = base64.b64encode(f.read()).decode()
                 content = '''
 <html><head>
@@ -124,7 +126,7 @@ def GET_panel():
     global lastPlot
     doc = []
     #PC/Phone status
-    with open(HOMEDIR + 'bulbStateLog', 'r') as f:
+    with open(os.path.join(HOMEDIR, 'bulbStateLog'), 'r') as f:
         bulbState = json.load(f)
 
     def onlineOffline(key):
@@ -134,35 +136,28 @@ def GET_panel():
     #Bulb State
     currBulb = 'Bulb state: '
     if 'custom:' in bulbState['state']:
-        currBulb += 'custom Temperature:%sK Brightness:%s' % (bublState['state'].split(':')[1:])
+        currBulb += 'custom Temperature:%sK Brightness:%s' % (bulbState['state'].split(':')[1:])
     else:
         currBulb += bulbState['state']
     doc.append(currBulb)
+    
+    temperaturePlotPic = os.path.join(HOMEDIR,'temperaturePlot.png')
 
-    if not lastPlot or (datetime.datetime.today() - lastPlot).days > 3 or not os.path.exists(HOMEDIR + 'temperaturePlot.png'):
+    if not lastPlot or (datetime.datetime.today() - lastPlot).days > 3 or not os.path.exists(temperaturePlotPic):
         lastPlot = datetime.datetime.today()
 
-        with open(HOMEDIR + 'calcTimes.pickle', 'rb') as f:
+        with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
             calcTimes = pickle.load(f)
         with open(HOMEDIR + 'nightTimeRange.pickle', 'rb') as f:
             nightTimeRange = pickle.load(f)
 
         createPlot(nightTimeRange, calcTimes)
-    doc.append('<img src="data:image/png;base64, %s">' % (base64.b64encode(open(HOMEDIR + 'temperaturePlot.png','rb').read()).decode('utf-8')))
+    doc.append('<img src="data:image/png;base64, %s">' % (base64.b64encode(open(temperaturePlotPic,'rb').read()).decode('utf-8')))
 
-
-
-    with open(HOMEDIR + 'richard_manualOverride.txt') as f:
+    with open(os.path.join(HOMEDIR, 'richard_manualOverride.txt')) as f:
         manualOverrideTime = f.read()
     doc.append(manualOverrideTime)
-
-
-
-
-
-
-
-
+    
     return doc
 
 
@@ -199,27 +194,11 @@ def createPlot(nightTimeRange, calcTimes):
 
     fig, ax = plt.subplots()
     plt.plot(X,Y)
-    fig.savefig(HOMEDIR + 'temperaturePlot.svg', format='svg', bbox_inches='tight')
+    fig.savefig(os.path.join(HOMEDIR, 'temperaturePlot.png'), format='png', bbox_inches='tight')
     return
 
-
-
-
-
-
-
-
-
-
-
-
-
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--dev',action='store_true', default=False)
-    args = parser.parse_args()
-
-    if args.dev:
+    if 'Windows' in platform.platform():
         HOST_NAME = '10.0.0.2'  #
         PORT_NUMBER = 9000
     else:
