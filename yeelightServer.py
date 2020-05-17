@@ -135,14 +135,15 @@ def GET_panel():
     doc.append('''<table><tr><td>PC</td><td>Phone</td></tr><tr><td>%s</td><td>%s</td></tr></table>''' % (onlineOffline('pcStatus'),onlineOffline('phoneStatus')))
 
     #Bulb State
-    currBulb = 'Bulb state: %s Temperature: %sK Brightness: %s%%'
+    currBulb = '<table><tr><td>State</td><td>Temperature</td><td>Brightness</td></tr><tr>' #'Bulb state: %s Temperature: %sK Brightness: %s%%'
     stateTranslation = {'day': ('day',__DAY_COLOR, 80,), 'dusk':('dusk',__DUSK_COLOR,80,), 'night':('night',__NIGHT_COLOR, 60,), 'sleep':('sleep',__SLEEP_COLOR, 20,)}
     if 'custom:' in bulbState['state']:
-        currBulb = currBulb % ('custom',bulbState['state'].split(':')[1:])
+        currBulb += '<td>custom</td>' + ''.join('<td>%s</td>' % str(x) for x in bulbState['state'].split(':')[1:])
     elif bulbState['state'] in stateTranslation:
-        currBulb = currBulb % stateTranslation[bulbState['state']]
+        currBulb += ''.join('<td>%s</td>' % str(x) for x in stateTranslation[bulbState['state']])
     else:
-        currBulb = bulbState['state']
+        currBulb += '<td>%s</td>' % bulbState['state']
+    currBulb += '</tr></table>'
     doc.append(currBulb)
     
     #Temperature plot
