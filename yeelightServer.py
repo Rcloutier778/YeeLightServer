@@ -1,3 +1,4 @@
+import sys
 import pickle
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -6,6 +7,8 @@ import logging
 import json
 import html
 import datetime
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os
 import os.path
@@ -16,7 +19,6 @@ from yeelightpython import __DAY_COLOR, __DUSK_COLOR, __NIGHT_COLOR, __SLEEP_COL
 
 
 HOMEDIR = '/home/richard/YeeLightServer' if 'Linux' in platform.platform() else os.getcwd()
-lastPlot = None
 #logging.basicConfig(filename=HOMEDIR+'serverLog.log',
 #                    filemode='a+',
 #                    format = '%(asctime)s %(levelname)s %(message)s',
@@ -124,7 +126,6 @@ class MyHandler(BaseHTTPRequestHandler):
 
 
 def GET_panel():
-    global lastPlot
     doc = []
     #PC/Phone status
     with open(os.path.join(HOMEDIR, 'bulbStateLog'), 'r') as f:
@@ -145,27 +146,27 @@ def GET_panel():
         currBulb += '<td>%s</td>' % bulbState['state']
     currBulb += '</tr></table>'
     doc.append(currBulb)
-    
+
     #Temperature plot
     temperaturePlotPic = os.path.join(HOMEDIR,'temperaturePlot.png')
-    if not lastPlot or (datetime.datetime.today() - lastPlot).days > 3 or not os.path.exists(temperaturePlotPic):
-        lastPlot = datetime.datetime.today()
-        with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
-            calcTimes = pickle.load(f)
-        with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'rb') as f:
-            nightTimeRange = pickle.load(f)
-        createPlot(nightTimeRange, calcTimes)
+    if not os.path.exists(temperaturePlotPic) or (datetime.datetime.today() - datetime.datetime.fromtimestamp(os.path.getmtime(temperaturePlotPic))).days > 3:
+        createPlot()
+
     doc.append('<img src="data:image/png;base64, %s">' % (base64.b64encode(open(temperaturePlotPic,'rb').read()).decode('utf-8')))
 
     with open(os.path.join(HOMEDIR, 'richard_manualOverride.txt')) as f:
         manualOverrideTime = datetime.datetime.strptime(f.read(), '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %I:%M:%S %p')
     doc.append(manualOverrideTime)
-    
+
     return doc
 
 
 
-def createPlot(nightTimeRange, calcTimes):
+def createPlot():
+    with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
+        calcTimes = pickle.load(f)
+    with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'rb') as f:
+        nightTimeRange = pickle.load(f)
 
     __SUNSET_TIME = calcTimes['sunsetTime']
 
@@ -192,15 +193,21 @@ def createPlot(nightTimeRange, calcTimes):
                     if startTime <= cur and cur < endTime:
                         Y.append(temperature)
                         break
+                else:
+                    logger.error('Got no temp or brightness setting for %d:%d', hr, m)
+                    Y.append(0)
             elif DNDrange[0] <= cur or cur < DNDrange[1]:
                 Y.append(0)
 
-    fig, ax = plt.subplots()
+    fig = plt.figure(figsize=(14,6), dpi=80)
     plt.plot(X,Y)
     fig.savefig(os.path.join(HOMEDIR, 'temperaturePlot.png'), format='png', bbox_inches='tight')
     return
 
 if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == 'createPlot':
+        createPlot()
+        exit(0)
     if 'Windows' in platform.platform():
         HOST_NAME = '10.0.0.2'  #
         PORT_NUMBER = 9000
