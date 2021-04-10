@@ -59,7 +59,7 @@ __SLEEP_TIME = '10:30:PM'
 
 
 def main():
-    # print(desk.get_properties())
+    # logger.info(desk.get_properties())
     global bulbs
     global phoneIP
     global pcIP
@@ -69,13 +69,13 @@ def main():
 
     response=subprocess.getstatusoutput('ping -n 2 10.0.0.7')
     if 'time=' not in response[1]: #timeout, phone not present.
-        print("Phone not present.")
+        logger.info("Phone not present.")
         logger.warning("Phone not present.")
         off()
         return
     '''
     if len(sys.argv) == 1:
-        print("No arguments.")
+        logger.info("No arguments.")
         logger.warning('No arguments.')
         return
     else:
@@ -103,11 +103,11 @@ def main():
                 globals()[cmd]()
         elif cmd in ['bright', 'brightness']:
             if type(sys.argv[2]) == int:
-                print("Changing brightness to %d" % int(sys.argv[2]))
+                logger.info("Changing brightness to %d" % int(sys.argv[2]))
                 for i in bulbs:
                     i.set_brightness(int(sys.argv[1]))
         else:
-            print("Command \"%s\" not found" % cmd)
+            logger.info("Command \"%s\" not found" % cmd)
 
 
 def autoset_auto():
@@ -306,21 +306,27 @@ def off(auto=False):
             ld = f.read().strip()
         if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
                 hours=1) > datetime.datetime.utcnow():
-            print("SystemTray used recently, canceling autoset")
+            logger.info("SystemTray used recently, canceling autoset")
             logger.info("SystemTray used recently, canceling autoset")
             return -1
-    
+
     writeState('off')
-    while all(x.get_properties()['power'] != 'off' for x in bulbs):
-        for i in bulbs:
+    while True:
+        for i in [x for x in bulbs if x.get_properties()['power'] == 'on']:
             i.turn_off()
+        #time.sleep(0.2)
+        if all(x.get_properties()['power'] == 'off' for x in bulbs):
+            break
 
 
 def on():
     writeState('on')
-    while all(x.get_properties()['power'] != 'on' for x in bulbs):
-        for i in bulbs:
+    while True:
+        for i in [x for x in bulbs if x.get_properties()['power'] == 'off']:
             i.turn_on()
+        #time.sleep(0.2)
+        if all(x.get_properties()['power'] == 'on' for x in bulbs):
+            break
 
 
 def toggle():
@@ -376,7 +382,7 @@ def lightTime():
 def discoverBulbs():
     foundBulbs = yeelight.discover_bulbs()
     for bulb in foundBulbs:
-        print(bulb)
+        logger.info(bulb)
 
 
 def logon():
@@ -397,7 +403,7 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
             ld = f.read().strip()
         if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
                 hours=1) > datetime.datetime.utcnow():
-            print("SystemTray used recently, canceling autoset")
+            logger.info("SystemTray used recently, canceling autoset")
             logger.info("SystemTray used recently, canceling autoset")
             return -1
     getCalcTimes()
@@ -409,7 +415,6 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     # logger.info(['autoset: ',now])
     dayrange = [__SUNRISE_TIME, __SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]:  # weekend
-        print("weekend")
         dayrange[0] = __WEEKEND_SUNRISE_TIME
     
     nightrange = [dayrange[1], __SLEEP_TIME]
@@ -480,13 +485,17 @@ def set_IRL_sunset():
         localTime = localTime.replace(tzinfo=None)
         origDict[key] = localTime
         logger.info('%s: %s', key, origDict[key].strftime("%I:%M:%S %p"))
+
+    sunsetOffset = datetime.timedelta(minutes=45)
+    origDict['sunset'] -= sunsetOffset
+    origDict['sunset'] = origDict['sunset'].replace(second=0)
     __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
 
     returnRange = []
     iters = 40  # number of iters to calc on
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR  # temp difference between sunset and sleep
     brightnessChangePoint = __DUSK_COLOR - (3 * tempDiff // 4)  # when to start changing brightness
-    timeDiff = (datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p").time()) - datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SUNSET_TIME, "%I:%M:%p").time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
+    timeDiff = (datetime.datetime.combine(datetime.date.today(),(datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") - datetime.timedelta(hours=1)).time()) - datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SUNSET_TIME, "%I:%M:%p").time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
 
     logger.info('__SUNSET_TIME: %s' % __SUNSET_TIME)
     logger.info('__SLEEP_TIME: %s' % __SLEEP_TIME)
@@ -495,7 +504,6 @@ def set_IRL_sunset():
     logger.info('timeDiff: %s' % (timeDiff))
 
     brightnessDecreaseIterNum =0 # None #The iteration where the brightness starts decreasing. 
-
     for i in range(iters):
         brightness = 80
         startTime = origDict['sunset'] + datetime.timedelta(minutes=timeDiff * i // iters)

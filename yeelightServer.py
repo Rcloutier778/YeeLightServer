@@ -169,7 +169,7 @@ def createPlot():
         nightTimeRange = pickle.load(f)
 
     __SUNSET_TIME = calcTimes['sunsetTime']
-
+    __SLEEP_TIME
     dayrange = [__SUNRISE_TIME, __SUNSET_TIME]
     if time.localtime().tm_wday in [5,6]:
         dayrange[0] = __WEEKEND_SUNRISE_TIME
@@ -182,8 +182,9 @@ def createPlot():
 
     X, Y = [],[]
     for hr in range(24):
-        for m in range(12):
-            m*=5
+        for m in range(60):
+            if m%5:
+                continue
             cur = datetime.time(hr, m, 0)
             X.append(cur.strftime("%I:%M:%p"))
             if dayrange[0] <= cur < dayrange[1]:
@@ -194,13 +195,22 @@ def createPlot():
                         Y.append(temperature)
                         break
                 else:
-                    logger.error('Got no temp or brightness setting for %d:%d', hr, m)
-                    Y.append(0)
+                    if (datetime.datetime.strptime(__SLEEP_TIME, '%I:%M:%p') - datetime.timedelta(hours=1)).time() <= cur < datetime.datetime.strptime(__SLEEP_TIME, '%I:%M:%p').time():
+                        Y.append(__SLEEP_COLOR)
+                    else:
+                        logger.error('Got no temp or brightness setting for %d:%d', hr, m)
+                        Y.append(0)
             elif DNDrange[0] <= cur or cur < DNDrange[1]:
                 Y.append(0)
 
-    fig = plt.figure(figsize=(14,6), dpi=80)
+
+    fig = plt.figure(figsize=(20,6), dpi=80)
     plt.plot(X,Y)
+    xlabels = []
+    for idx, x in enumerate(X):
+        xlabels.append('' if idx % 5 else str(x))
+
+    plt.xticks(X, xlabels, rotation='vertical')
     fig.savefig(os.path.join(HOMEDIR, 'temperaturePlot.png'), format='png', bbox_inches='tight')
     return
 
