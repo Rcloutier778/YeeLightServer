@@ -156,6 +156,7 @@ def monitor_advert_bulbs(event, cond):
         if b'ssdp:discover' not in res:
             event.set()
             with cond:
+                logger.info("Dynamic bulb")
                 cond.notify()
     
 def monitor_bulb_static(event, cond):
@@ -179,6 +180,7 @@ def monitor_bulb_static(event, cond):
             current_bulbs_ips = found_bulbs_ip
             event.set()
             with cond:
+                logger.info("Static bulb")
                 cond.notify()
         time.sleep(60)
         
@@ -348,8 +350,8 @@ def resetFromLoggedState():
     elif state == 'color':
         pass  # Color is being manually manipulated, don't touch
     elif 'custom:' in state:
-        temperature, brightness = int(state.split(':')[1:])
-        customTempFlow(temperature, brightness=brightness)
+        temperature, brightness = state.split(':')[1:]
+        customTempFlow(int(temperature), brightness=int(brightness))
 
 def checkPingThreaded(event, pipe, cond):
     """
