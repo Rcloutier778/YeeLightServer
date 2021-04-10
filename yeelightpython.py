@@ -1,13 +1,14 @@
-import yeelight
-import time
-import yeelight.transitions
-import yeelight.enums
-import sys
 import datetime
-import logging
 import json
+import logging
 import os
 import pickle
+import sys
+import time
+
+import yeelight
+import yeelight.enums
+import yeelight.transitions
 
 HOMEDIR = '/home/richard/YeeLightServer/'
 os.chdir(HOMEDIR)
@@ -20,7 +21,7 @@ formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
 
-#logging.basicConfig(filename=HOMEDIR + 'log.log',
+# logging.basicConfig(filename=HOMEDIR + 'log.log',
 #                    filemode='a+',
 #                    format='%(asctime)s %(levelname)s %(message)s',
 #                    datefmt='%Y-%m-%d %I:%M:%S%p',
@@ -179,7 +180,7 @@ def resetFromLoggedState():
     elif state == 'color':
         pass  # Color is being manually manipulated, don't touch
     elif 'custom:' in state:
-        temperature,brightness = int(state.split(':')[1:])
+        temperature, brightness = int(state.split(':')[1:])
         customTempFlow(temperature, brightness=brightness)
 
 
@@ -309,12 +310,12 @@ def off(auto=False):
             logger.info("SystemTray used recently, canceling autoset")
             logger.info("SystemTray used recently, canceling autoset")
             return -1
-
+    
     writeState('off')
     while True:
         for i in [x for x in bulbs if x.get_properties()['power'] == 'on']:
             i.turn_off()
-        #time.sleep(0.2)
+        # time.sleep(0.2)
         if all(x.get_properties()['power'] == 'off' for x in bulbs):
             break
 
@@ -324,7 +325,7 @@ def on():
     while True:
         for i in [x for x in bulbs if x.get_properties()['power'] == 'off']:
             i.turn_on()
-        #time.sleep(0.2)
+        # time.sleep(0.2)
         if all(x.get_properties()['power'] == 'on' for x in bulbs):
             break
 
@@ -407,7 +408,7 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
             logger.info("SystemTray used recently, canceling autoset")
             return -1
     getCalcTimes()
-
+    
     # set light level when computer is woken up, based on time of day
     rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
     now = datetime.time(rn.hour, rn.minute, 0)
@@ -421,7 +422,7 @@ def autoset(autosetDuration=300000, autoset_auto_var=False):
     DNDrange = [nightrange[1], dayrange[0]]
     
     autosetNightRange = getNightRange()
-     
+    
     timeranges = [dayrange, nightrange, DNDrange]
     for r in timeranges:
         for rr in range(0, 2):
@@ -455,6 +456,7 @@ def getNightRange():
         nightTimeRange = pickle.load(f)
     return nightTimeRange
 
+
 def getCalcTimes():
     global __SUNSET_TIME
     global __SLEEP_TIME
@@ -462,7 +464,6 @@ def getCalcTimes():
         calcTimes = pickle.load(f)
         __SUNSET_TIME = calcTimes['sunsetTime']
 
-    
 
 def set_IRL_sunset():
     global __SUNSET_TIME
@@ -471,56 +472,60 @@ def set_IRL_sunset():
     import json
     import pytz
     import datetime
-    import math
     r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0')
     assert r.status_code == 200
     origDict = json.loads(r.text)['results']
     for key in origDict:
-        if not isinstance(origDict[key],str) or not re.match(
-            r'\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\+\d\d:\d\d',
-            origDict[key]):
+        if not isinstance(origDict[key], str) or not re.match(
+                r'\d\d\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\+\d\d:\d\d',
+                origDict[key]):
             continue
         ogTime = datetime.datetime.strptime(origDict[key], "%Y-%m-%dT%H:%M:%S%z")
         localTime = ogTime.astimezone(pytz.timezone('US/Eastern'))
         localTime = localTime.replace(tzinfo=None)
         origDict[key] = localTime
         logger.info('%s: %s', key, origDict[key].strftime("%I:%M:%S %p"))
-
+    
     sunsetOffset = datetime.timedelta(minutes=45)
     origDict['sunset'] -= sunsetOffset
     origDict['sunset'] = origDict['sunset'].replace(second=0)
     __SUNSET_TIME = origDict['sunset'].strftime("%I:%M:%p")
-
+    
     returnRange = []
     iters = 40  # number of iters to calc on
     tempDiff = __DUSK_COLOR - __SLEEP_COLOR  # temp difference between sunset and sleep
     brightnessChangePoint = __DUSK_COLOR - (3 * tempDiff // 4)  # when to start changing brightness
-    timeDiff = (datetime.datetime.combine(datetime.date.today(),(datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") - datetime.timedelta(hours=1)).time()) - datetime.datetime.combine(datetime.date.today(),datetime.datetime.strptime(__SUNSET_TIME, "%I:%M:%p").time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
-
+    timeDiff = (datetime.datetime.combine(datetime.date.today(), (
+                datetime.datetime.strptime(__SLEEP_TIME, "%I:%M:%p") - datetime.timedelta(
+            hours=1)).time()) - datetime.datetime.combine(datetime.date.today(),
+                                                          datetime.datetime.strptime(__SUNSET_TIME,
+                                                                                     "%I:%M:%p").time())).total_seconds() // 60  # minutes between AFTER sunset and sleep
+    
     logger.info('__SUNSET_TIME: %s' % __SUNSET_TIME)
     logger.info('__SLEEP_TIME: %s' % __SLEEP_TIME)
     logger.info('civil_twilight_end: %s' % origDict['civil_twilight_end'].strftime('%I:%M:%p'))
-
+    
     logger.info('timeDiff: %s' % (timeDiff))
-
-    brightnessDecreaseIterNum =0 # None #The iteration where the brightness starts decreasing. 
+    
+    brightnessDecreaseIterNum = 0  # None #The iteration where the brightness starts decreasing.
     for i in range(iters):
         brightness = 80
         startTime = origDict['sunset'] + datetime.timedelta(minutes=timeDiff * i // iters)
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = __DUSK_COLOR - int(tempDiff * i // iters)
-        #logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
+        # logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
         if startTime >= origDict['nautical_twilight_end']:  # temperature < brightnessChangePoint:
             if not brightnessDecreaseIterNum:
                 brightnessDecreaseIterNum = i
-            brightness = int(80 * ((iters - i) / (iters-brightnessDecreaseIterNum)))
+            brightness = int(80 * ((iters - i) / (iters - brightnessDecreaseIterNum)))
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
     for startTime, endTime, temp, brightness in returnRange:
-        logger.info('%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
+        logger.info(
+            '%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
     with open(HOMEDIR + 'nightTimeRange.pickle', 'wb+') as f:
         pickle.dump(returnRange, f)
     with open(HOMEDIR + 'calcTimes.pickle', 'wb+') as f:
-        pickle.dump({'sunsetTime':__SUNSET_TIME},f)
+        pickle.dump({'sunsetTime': __SUNSET_TIME}, f)
 
 
 if __name__ == "__main__":
