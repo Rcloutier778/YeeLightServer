@@ -128,7 +128,7 @@ def rebuild_bulbs():
         bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
 
         
-def monitor_advert_bulbs(event):
+def monitor_advert_bulbs(event, cond):
     """
     Monitors Yeelights default multicast host and port
     Yeelight bulbs will advertise their presence on startup and every 60 minutes afterwardsd
@@ -154,8 +154,10 @@ def monitor_advert_bulbs(event):
     while True:
         sock.recv(10240)
         event.set()
+        with cond:
+            cond.notify()
     
-def monitor_bulb_static(event):
+def monitor_bulb_static(event, cond):
     """
     Monitors for bulb connection/disconnections. Mainly for disconnections.
     :param event:
@@ -175,6 +177,8 @@ def monitor_bulb_static(event):
 
             current_bulbs_ips = found_bulbs_ip
             event.set()
+            with cond:
+                cond.notify()
         time.sleep(1)
         
 
@@ -197,12 +201,12 @@ class Server(object):
         self.bulb_event = mp.Event()
         self.wake_condition = mp.Condition()
         self.TIMEOUT_INTERVAL = 60*5 # 5 min
-        self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event,))
-        self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event,))
+        self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event, self.wake_condition))
+        self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event,self.wake_condition))
 
         self.ping_event = mp.Event()
         self.ping_pipe, child_pipe = mp.Pipe()
-        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, child_pipe,))
+        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, child_pipe, self.wake_condition))
         self.ping_res = True
 
     def wake_predicate(self):
@@ -239,20 +243,21 @@ class Server(object):
         
         systemStartTime = datetime.datetime.utcnow()
         while True:
-            self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
-            if self.wake_predicate():
-                self.resolve_wake()
+            with self.wake_condition:
+                self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
+                if self.wake_predicate():
+                    self.resolve_wake()
+                    
+                if not self.ping_res:
+                    logger.info("Autoset_auto off")
+                    off(True)
+                else:
+                    autoset(300, autoset_auto_var=True)
+    
+                if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
+                    systemStartTime = datetime.datetime.utcnow()
+                    set_IRL_sunset()
                 
-            if not self.ping_res:
-                logger.info("Autoset_auto off")
-                off(True)
-            else:
-                autoset(300, autoset_auto_var=True)
-
-            if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
-                systemStartTime = datetime.datetime.utcnow()
-                set_IRL_sunset()
-            
 
 
 
@@ -343,7 +348,7 @@ def resetFromLoggedState():
         temperature, brightness = int(state.split(':')[1:])
         customTempFlow(temperature, brightness=brightness)
 
-def checkPingThreaded(event, pipe):
+def checkPingThreaded(event, pipe, cond):
     """
     Threaded runner of checkPing
     :param event:
@@ -357,7 +362,8 @@ def checkPingThreaded(event, pipe):
         res = checkPing()
         pipe.send([phoneStatus, pcStatus, res])
         event.set()
-        
+        with cond:
+            cond.notify()
 
 
 def checkPing():
