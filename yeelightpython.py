@@ -1,6 +1,7 @@
 import datetime
 import json
 import logging
+import multiprocessing as mp
 import os
 import pickle
 import sys
@@ -111,7 +112,161 @@ def main():
             logger.info("Command \"%s\" not found" % cmd)
 
 
+def rebuild_bulbs():
+    "Rebuild the bulb list."
+    global bulbs
+    found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2))
+    current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
+    if current_bulbs_ips != found_bulbs_ip:
+        new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
+        missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+        for new_ip in new_ips:
+            logger.info('Found new bulb at ip addr: %s', new_ip)
+        for missing_ip in missing_ips:
+            logger.info('Missing bulb at ip addr: %s', missing_ip)
+            
+        bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
+
+        
+def monitor_advert_bulbs(event):
+    """
+    Monitors Yeelights default multicast host and port
+    Yeelight bulbs will advertise their presence on startup and every 60 minutes afterwardsd
+    :param pipe:
+    :return:
+    """
+    import socket
+    import struct
+    
+    # Default yeelight multicast group and port
+    MCAST_GRP = '239.255.255.250'
+    MCAST_PORT = 1982
+    
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    # on this port, receives ALL multicast groups
+    sock.bind(('', MCAST_PORT))
+
+    mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
+    
+    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    
+    while True:
+        sock.recv(10240)
+        event.set()
+    
+def monitor_bulb_static(event):
+    """
+    Monitors for bulb connection/disconnections. Mainly for disconnections.
+    :param event:
+    :return:
+    """
+    current_bulbs_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs())
+    
+    while True:
+        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2))
+        if current_bulbs_ips != found_bulbs_ip:
+            new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
+            missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+            for new_ip in new_ips:
+                logger.info('Found new bulb at ip addr: %s', new_ip)
+            for missing_ip in missing_ips:
+                logger.info('Missing bulb at ip addr: %s', missing_ip)
+
+            current_bulbs_ips = found_bulbs_ip
+            event.set()
+        time.sleep(1)
+        
+
+
+
+class Server(object):
+    """
+    Acts as a server.
+    Waits on different events to trigger
+        Bulbs appearing (power switch turned on)
+        Bulbs disappearing (power switch turned off)
+        Timeout interval (5 min)
+        PC or Phone disappearing from network (turned off or me leaving the apartment)
+        
+    :return:
+    """
+    
+    def __init__(self):
+        resetFromLoggedState()
+        self.bulb_event = mp.Event()
+        self.wake_condition = mp.Condition()
+        self.TIMEOUT_INTERVAL = 60*5 # 5 min
+        self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event,))
+        self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event,))
+
+        self.ping_event = mp.Event()
+        self.ping_pipe, child_pipe = mp.Pipe()
+        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, child_pipe,))
+        self.ping_res = True
+
+    def wake_predicate(self):
+        """
+        The wake condition for the main thread
+        :return:
+        """
+        return self.ping_event.is_set() or self.bulb_event.is_set()
+    
+    def resolve_wake(self):
+        """
+        Resolve whatever event woke the main thread
+        :return:
+        """
+        if self.bulb_event.is_set():
+            rebuild_bulbs()
+            self.bulb_event.clear()
+        if self.ping_event.is_set():
+            global phoneStatus
+            global pcStatus
+            phoneStatus, pcStatus, self.ping_res = self.ping_pipe.recv()
+            
+            self.ping_event.clear()
+        self.wake_condition.release()
+    
+    def run(self):
+        """
+        Runs the server
+        :return:
+        """
+        self.monitor_bulb_advert_proc.start()
+        self.monitor_bulb_static_proc.start()
+        self.check_ping_proc.start()
+        
+        systemStartTime = datetime.datetime.utcnow()
+        while True:
+            self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
+            if self.wake_predicate():
+                self.resolve_wake()
+                
+            if not self.ping_res:
+                logger.info("Autoset_auto off")
+                off(True)
+            else:
+                autoset(300, autoset_auto_var=True)
+
+            if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
+                systemStartTime = datetime.datetime.utcnow()
+                set_IRL_sunset()
+            
+
+
+
+def run_server():
+    server = Server()
+    server.run()
+
+
+
 def autoset_auto():
+    """
+    Acts as a server, so should never exit.
+    :return:
+    """
     logger.error("Boot autoset_auto")
     try:
         set_IRL_sunset()
@@ -141,6 +296,7 @@ def autoset_auto():
             else:  # Was 0, now 1
                 while True:
                     logger.info("Autoset_auto on")
+                    rebuild_bulbs()
                     try:
                         on()
                         logger.info("After on")
@@ -157,6 +313,10 @@ def autoset_auto():
 
 
 def resetFromLoggedState():
+    """
+    Crash recovery. Reset light and color values from their last saved state.
+    :return:
+    """
     global phoneStatus
     global pcStatus
     
@@ -183,8 +343,28 @@ def resetFromLoggedState():
         temperature, brightness = int(state.split(':')[1:])
         customTempFlow(temperature, brightness=brightness)
 
+def checkPingThreaded(event, pipe):
+    """
+    Threaded runner of checkPing
+    :param event:
+    :param pipe:
+    :return:
+    """
+    global phoneStatus
+    global pcStatus
+    resetFromLoggedState()
+    while True:
+        res = checkPing()
+        pipe.send([phoneStatus, pcStatus, res])
+        event.set()
+        
+
 
 def checkPing():
+    """
+    Checks if my PC or phone is on the network and if their state has changed.
+    :return:
+    """
     global phoneStatus
     global pcStatus
     if phoneStatus:
