@@ -51,6 +51,7 @@ __WEEKEND_SUNRISE_TIME = '8:00:AM'
 __SUNSET_TIME = '5:30:PM'
 __SLEEP_TIME = '10:30:PM'
 
+AUTOSET_DURATION = 300000
 # TODO
 """
 1) autoset on wakeup from lan
@@ -200,6 +201,7 @@ class Server(object):
     """
     
     def __init__(self):
+        set_IRL_sunset()
         resetFromLoggedState()
         self.bulb_event = mp.Event()
         self.wake_condition = mp.Condition()
@@ -211,6 +213,7 @@ class Server(object):
         self.ping_pipe, child_pipe = mp.Pipe()
         self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, child_pipe, self.wake_condition,))
         self.ping_res = True
+        self.timer_wake = False
 
     def wake_predicate(self):
         """
@@ -248,9 +251,11 @@ class Server(object):
         
         systemStartTime = datetime.datetime.utcnow()
         while True:
+            self.timer_wake=True
             with self.wake_condition:
                 self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
                 if self.wake_predicate():
+                    self.timer_wake=False
                     self.resolve_wake()
             logger.info("Woke up")
             if not self.ping_res:
@@ -258,7 +263,7 @@ class Server(object):
                 off(True)
             else:
                 on()
-                autoset(300, autoset_auto_var=True)
+                autoset(AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
 
             if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
                 systemStartTime = datetime.datetime.utcnow()
@@ -583,7 +588,7 @@ def logon():
     return
 
 
-def autoset(autosetDuration=300000, autoset_auto_var=False):
+def autoset(autosetDuration=AUTOSET_DURATION, autoset_auto_var=False):
     if all(x.get_properties()['power'] == 'off' for x in bulbs):
         logger.info('Power is off, cancelling autoset')
         return -1
