@@ -39,7 +39,7 @@ user = None
 phoneStatus = True
 pcStatus = True
 
-commands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'logon', 'autoset_auto']
+commands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'logon', 'autoset_auto', 'run_server']
 allcommands = commands + ['bright', 'brightness', 'rgb']
 
 __DAY_COLOR = 4000
@@ -152,10 +152,11 @@ def monitor_advert_bulbs(event, cond):
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     
     while True:
-        sock.recv(10240)
-        event.set()
-        with cond:
-            cond.notify()
+        res = sock.recv(10240)
+        if b'ssdp:discover' not in res:
+            event.set()
+            with cond:
+                cond.notify()
     
 def monitor_bulb_static(event, cond):
     """
@@ -166,7 +167,7 @@ def monitor_bulb_static(event, cond):
     current_bulbs_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs())
     
     while True:
-        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2))
+        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
         if current_bulbs_ips != found_bulbs_ip:
             new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
             missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
@@ -179,7 +180,7 @@ def monitor_bulb_static(event, cond):
             event.set()
             with cond:
                 cond.notify()
-        time.sleep(1)
+        time.sleep(60)
         
 
 
@@ -200,13 +201,13 @@ class Server(object):
         resetFromLoggedState()
         self.bulb_event = mp.Event()
         self.wake_condition = mp.Condition()
-        self.TIMEOUT_INTERVAL = 60*5 # 5 min
-        self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event, self.wake_condition))
-        self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event,self.wake_condition))
+        self.TIMEOUT_INTERVAL = 5*60 # 5 min
+        self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event, self.wake_condition,))
+        self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event,self.wake_condition,))
 
         self.ping_event = mp.Event()
         self.ping_pipe, child_pipe = mp.Pipe()
-        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, child_pipe, self.wake_condition))
+        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, child_pipe, self.wake_condition,))
         self.ping_res = True
 
     def wake_predicate(self):
@@ -221,22 +222,24 @@ class Server(object):
         Resolve whatever event woke the main thread
         :return:
         """
+        logger.info("Resolving wake")
         if self.bulb_event.is_set():
+            logger.info("Resolving bulb event")
             rebuild_bulbs()
             self.bulb_event.clear()
         if self.ping_event.is_set():
+            logger.info("Resolving ping event")
             global phoneStatus
             global pcStatus
             phoneStatus, pcStatus, self.ping_res = self.ping_pipe.recv()
-            
             self.ping_event.clear()
-        self.wake_condition.release()
     
     def run(self):
         """
         Runs the server
         :return:
         """
+        logger.error("Booting server")
         self.monitor_bulb_advert_proc.start()
         self.monitor_bulb_static_proc.start()
         self.check_ping_proc.start()
@@ -247,17 +250,17 @@ class Server(object):
                 self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
                 if self.wake_predicate():
                     self.resolve_wake()
-                    
-                if not self.ping_res:
-                    logger.info("Autoset_auto off")
-                    off(True)
-                else:
-                    autoset(300, autoset_auto_var=True)
-    
-                if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
-                    systemStartTime = datetime.datetime.utcnow()
-                    set_IRL_sunset()
-                
+            logger.info("Woke up")
+            if not self.ping_res:
+                logger.info("Autoset_auto off")
+                off(True)
+            else:
+                on()
+                autoset(300, autoset_auto_var=True)
+
+            if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
+                systemStartTime = datetime.datetime.utcnow()
+                set_IRL_sunset()
 
 
 
