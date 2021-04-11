@@ -242,6 +242,7 @@ class Server(object):
             self.bulb_event.clear()
         if self.ping_event.is_set():
             logger.info("Resolving ping event")
+            self.timer_wake=False
             global phoneStatus
             global pcStatus
             phoneStatus, pcStatus, self.ping_res = self.ping_pipe.recv()
@@ -263,12 +264,11 @@ class Server(object):
             with self.wake_condition:
                 self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
                 if self.wake_predicate():
-                    self.timer_wake=False
                     self.resolve_wake()
             logger.info("Woke up")
             if not self.ping_res:
                 logger.info("Autoset_auto off")
-                off(True)
+                off(not self.timer_wake)
             else:
                 on()
                 autoset(AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
