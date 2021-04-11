@@ -154,10 +154,12 @@ def monitor_advert_bulbs(event, cond):
     
     while True:
         res = sock.recv(10240)
+        # ssdb:discover is a hallmark of yeelight.discover_bulbs(), which is what we send in static search.
         if b'ssdp:discover' not in res:
             event.set()
             with cond:
                 logger.info("Dynamic bulb")
+                logger.info(res)
                 cond.notify()
     
 def monitor_bulb_static(event, cond):
@@ -166,23 +168,29 @@ def monitor_bulb_static(event, cond):
     :param event:
     :return:
     """
-    current_bulbs_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs())
+    current_bulbs_ips = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs()))
     
     while True:
-        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
+        found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(1)))
         if current_bulbs_ips != found_bulbs_ip:
-            new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
-            missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
-            for new_ip in new_ips:
-                logger.info('Found new bulb at ip addr: %s', new_ip)
-            for missing_ip in missing_ips:
-                logger.info('Missing bulb at ip addr: %s', missing_ip)
-
-            current_bulbs_ips = found_bulbs_ip
-            event.set()
-            with cond:
-                logger.info("Static bulb")
-                cond.notify()
+            # Retry 3 times. Sometimes a bulb doesn't respond for whatever reason.
+            for _ in range(3):
+                tmp_found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2)))
+                if tmp_found_bulbs_ip == current_bulbs_ips:
+                    break
+            else:
+                new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
+                missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+                for new_ip in new_ips:
+                    logger.info('Found new bulb at ip addr: %s', new_ip)
+                for missing_ip in missing_ips:
+                    logger.info('Missing bulb at ip addr: %s', missing_ip)
+    
+                current_bulbs_ips = found_bulbs_ip
+                event.set()
+                with cond:
+                    logger.info("Static bulb")
+                    cond.notify()
         time.sleep(60)
         
 
