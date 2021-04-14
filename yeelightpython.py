@@ -14,13 +14,23 @@ import yeelight.transitions
 HOMEDIR = '/home/richard/YeeLightServer/'
 os.chdir(HOMEDIR)
 
+formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+
 logger = logging.getLogger('log')
 logger.setLevel(logging.INFO)
 fh = logging.FileHandler(HOMEDIR + 'log.log', 'a+')
 fh.setLevel(logging.INFO)
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 fh.setFormatter(formatter)
 logger.addHandler(fh)
+
+bulbLog = logging.getLogger('bulbLog')
+bulbLog.setLevel(logging.DEBUG)
+fh = logging.FileHandler(HOMEDIR + 'bulbLog.log', 'a+')
+fh.setLevel(logging.DEBUG)
+fh.setFormatter(formatter)
+bulbLog.addHandler(fh)
+
+
 
 # logging.basicConfig(filename=HOMEDIR + 'log.log',
 #                    filemode='a+',
@@ -159,7 +169,6 @@ def monitor_advert_bulbs(event, cond):
             event.set()
             with cond:
                 logger.info("Dynamic bulb")
-                logger.info(res)
                 cond.notify()
     
 def monitor_bulb_static(event, cond):
@@ -267,8 +276,7 @@ class Server(object):
                     self.resolve_wake()
             logger.info("Woke up")
             if not self.ping_res:
-                logger.info("Autoset_auto off")
-                off(not self.timer_wake)
+                off(True)
             else:
                 on()
                 autoset(AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
@@ -445,9 +453,10 @@ def sunrise():
     # Write the new state
     writeState('day')
     
+    bulbLog.info('Sunrise start')
     overallDuration = 1200000  # 1200000 == 20 min
     on()
-    
+
     for i in bulbs:
         i.set_brightness(0)
         i.set_rgb(255, 0, 0)
@@ -463,12 +472,14 @@ def sunrise():
 
 
 def brightness(val):
+    bulbLog.info('Brightness = %d', val)
     for i in bulbs:
         i.set_brightness(val)
 
 
 def day(duration=3000, auto=False):
     writeState('day')
+    bulbLog.info('Day')
     if not auto:
         on()
     # 3200
@@ -477,6 +488,7 @@ def day(duration=3000, auto=False):
 
 def dusk(duration=3000, auto=False):
     writeState('dusk')
+    bulbLog.info('Dusk')
     if not auto:
         on()
     # 3000
@@ -485,6 +497,7 @@ def dusk(duration=3000, auto=False):
 
 def night(duration=3000, auto=False):
     writeState('night')
+    bulbLog.info('Night')
     if not auto:
         on()
     colorTempFlow(__NIGHT_COLOR, duration, 80)
@@ -492,6 +505,7 @@ def night(duration=3000, auto=False):
 
 def sleep(duration=3000, auto=False):
     writeState('sleep')
+    bulbLog.info('Sleep')
     if not auto:
         on()
     colorTempFlow(__SLEEP_COLOR, duration, 20)
@@ -499,6 +513,7 @@ def sleep(duration=3000, auto=False):
 
 def customTempFlow(temperature, duration=3000, auto=False, brightness=80):
     writeState('custom:%d:%d' % (temperature, brightness,))
+    bulbLog.info('Custom:%d:%d', temperature, brightness)
     if not auto:
         on()
     colorTempFlow(temperature, duration, brightness)
@@ -511,11 +526,12 @@ def off(auto=False):
             ld = f.read().strip()
         if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
                 hours=1) > datetime.datetime.utcnow():
-            logger.info("SystemTray used recently, canceling autoset")
-            logger.info("SystemTray used recently, canceling autoset")
+            bulbLog.info("SystemTray used recently, canceling autoset")
             return -1
+        logger.info('autoset_auto off')
     
     writeState('off')
+    bulbLog.info('off')
     while True:
         for i in [x for x in bulbs if x.get_properties()['power'] == 'on']:
             i.turn_off()
@@ -526,6 +542,7 @@ def off(auto=False):
 
 def on():
     writeState('on')
+    bulbLog.info('on')
     while True:
         for i in [x for x in bulbs if x.get_properties()['power'] == 'off']:
             i.turn_on()
