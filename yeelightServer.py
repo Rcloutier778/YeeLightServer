@@ -18,7 +18,7 @@ import platform
 from yeelightpython import __DAY_COLOR, __DUSK_COLOR, __NIGHT_COLOR, __SLEEP_COLOR, __SUNRISE_TIME, \
     __WEEKEND_SUNRISE_TIME, __SLEEP_TIME
 
-HOMEDIR = '/home/richard/YeeLightServer' if 'Linux' in platform.platform() else os.getcwd()
+HOMEDIR = __file__.rsplit(os.sep, 1)[0]
 # logging.basicConfig(filename=HOMEDIR+'serverLog.log',
 #                    filemode='a+',
 #                    format = '%(asctime)s %(levelname)s %(message)s',
@@ -120,7 +120,7 @@ class MyHandler(BaseHTTPRequestHandler):
             logger.error('Got exception ', exc_info=True)
             content = '<html><head><title>Panel GUI</title></head>\n<body>GOT ERROR!<br>%s\n</body></html>\n' % \
                       html.escape(
-                e)
+                          e)
         
         return bytes(content, 'UTF-8')
     
@@ -139,7 +139,7 @@ def GET_panel():
         return '<p style="color:green">Online</p>' if bulbState[key] else '<p style="color:red">Offline</p>'
     
     doc.append('''<table><tr><td>PC</td><td>Phone</td></tr><tr><td>%s</td><td>%s</td></tr></table>''' % (
-    onlineOffline('pcStatus'), onlineOffline('phoneStatus')))
+        onlineOffline('pcStatus'), onlineOffline('phoneStatus')))
     
     # Bulb State
     currBulb = '<table><tr><td>State</td><td>Temperature</td><td>Brightness</td></tr><tr>'  # 'Bulb state: %s

@@ -11,7 +11,8 @@ import yeelight
 import yeelight.enums
 import yeelight.transitions
 
-HOMEDIR = '/home/richard/YeeLightServer/'
+
+HOMEDIR = __file__.rsplit(os.sep, 1)[0] + os.sep
 os.chdir(HOMEDIR)
 
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
@@ -49,7 +50,7 @@ user = None
 phoneStatus = True
 pcStatus = True
 
-commands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'logon', 'autoset_auto', 'run_server']
+commands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'autoset_auto', 'run_server']
 allcommands = commands + ['bright', 'brightness', 'rgb']
 
 __DAY_COLOR = 4000
@@ -202,9 +203,7 @@ def monitor_bulb_static(event, cond):
                     cond.notify()
         time.sleep(60)
         
-
-
-
+        
 class Server(object):
     """
     Acts as a server.
@@ -447,6 +446,10 @@ def writeManualOverride():
 
 
 def sunrise():
+    """
+    Simulate a sunrise.
+    :return:
+    """
     # Prevent autoset from taking over
     writeManualOverride()
     
@@ -593,24 +596,11 @@ def getLastState():
     return jdict
 
 
-def lightTime():
-    # TODO
-    # set light level based on time of day, hour by hour to get smoother transition than day/dusk/night/sleep
-    # day=datetime.time.
-    # time.time()
-    pass
-
 
 def discoverBulbs():
     foundBulbs = yeelight.discover_bulbs()
     for bulb in foundBulbs:
         logger.info(bulb)
-
-
-def logon():
-    on()
-    autoset(autosetDuration=3000)
-    return
 
 
 def autoset(autosetDuration=AUTOSET_DURATION, autoset_auto_var=False):
@@ -625,7 +615,6 @@ def autoset(autosetDuration=AUTOSET_DURATION, autoset_auto_var=False):
             ld = f.read().strip()
         if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
                 hours=1) > datetime.datetime.utcnow():
-            logger.info("SystemTray used recently, canceling autoset")
             logger.info("SystemTray used recently, canceling autoset")
             return -1
     getCalcTimes()
