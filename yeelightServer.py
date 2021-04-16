@@ -15,8 +15,8 @@ import os
 import os.path
 import base64
 import platform
-from yeelightpython import __DAY_COLOR, __DUSK_COLOR, __NIGHT_COLOR, __SLEEP_COLOR, __SUNRISE_TIME, \
-    __WEEKEND_SUNRISE_TIME, __SLEEP_TIME
+from yeelightpython import DAY_COLOR, DUSK_COLOR, NIGHT_COLOR, SLEEP_COLOR, SUNRISE_TIME, \
+    WEEKEND_SUNRISE_TIME, SLEEP_TIME
 
 HOMEDIR = __file__.rsplit(os.sep, 1)[0]
 # logging.basicConfig(filename=HOMEDIR+'serverLog.log',
@@ -144,8 +144,8 @@ def GET_panel():
     # Bulb State
     currBulb = '<table><tr><td>State</td><td>Temperature</td><td>Brightness</td></tr><tr>'  # 'Bulb state: %s
     # Temperature: %sK Brightness: %s%%'
-    stateTranslation = {'day': ('day', __DAY_COLOR, 80,), 'dusk': ('dusk', __DUSK_COLOR, 80,),
-                        'night': ('night', __NIGHT_COLOR, 60,), 'sleep': ('sleep', __SLEEP_COLOR, 20,)}
+    stateTranslation = {'day': ('day', DAY_COLOR, 80,), 'dusk': ('dusk', DUSK_COLOR, 80,),
+                        'night': ('night', NIGHT_COLOR, 60,), 'sleep': ('sleep', SLEEP_COLOR, 20,)}
     if 'custom:' in bulbState['state']:
         currBulb += '<td>custom</td>' + ''.join('<td>%s</td>' % str(x) for x in bulbState['state'].split(':')[1:])
     elif bulbState['state'] in stateTranslation:
@@ -177,12 +177,12 @@ def createPlot():
     with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'rb') as f:
         nightTimeRange = pickle.load(f)
     
-    __SUNSET_TIME = calcTimes['sunsetTime']
-    __SLEEP_TIME
-    dayrange = [__SUNRISE_TIME, __SUNSET_TIME]
+    SUNSET_TIME = calcTimes['sunsetTime']
+    SLEEP_TIME
+    dayrange = [SUNRISE_TIME, SUNSET_TIME]
     if time.localtime().tm_wday in [5, 6]:
-        dayrange[0] = __WEEKEND_SUNRISE_TIME
-    nightrange = [dayrange[1], __SLEEP_TIME]
+        dayrange[0] = WEEKEND_SUNRISE_TIME
+    nightrange = [dayrange[1], SLEEP_TIME]
     DNDrange = [nightrange[1], dayrange[0]]
     for r in [dayrange, nightrange, DNDrange]:
         for rr in range(2):
@@ -197,16 +197,16 @@ def createPlot():
             cur = datetime.time(hr, m, 0)
             X.append(cur.strftime("%I:%M:%p"))
             if dayrange[0] <= cur < dayrange[1]:
-                Y.append(__DAY_COLOR)
+                Y.append(DAY_COLOR)
             elif nightrange[0] <= cur < nightrange[1]:
                 for (startTime, endTime, temperature, brightness) in nightTimeRange:
                     if startTime <= cur and cur < endTime:
                         Y.append(temperature)
                         break
                 else:
-                    if (datetime.datetime.strptime(__SLEEP_TIME, '%I:%M:%p') - datetime.timedelta(
-                            hours=1)).time() <= cur < datetime.datetime.strptime(__SLEEP_TIME, '%I:%M:%p').time():
-                        Y.append(__SLEEP_COLOR)
+                    if (datetime.datetime.strptime(SLEEP_TIME, '%I:%M:%p') - datetime.timedelta(
+                            hours=1)).time() <= cur < datetime.datetime.strptime(SLEEP_TIME, '%I:%M:%p').time():
+                        Y.append(SLEEP_COLOR)
                     else:
                         logger.error('Got no temp or brightness setting for %d:%d', hr, m)
                         Y.append(0)
