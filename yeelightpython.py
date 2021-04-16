@@ -840,7 +840,7 @@ def set_IRL_sunset():
             '%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
     with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'wb+') as f:
         pickle.dump(returnRange, f)
-    with open(os.path.join(HOMEDIR + 'calcTimes.pickle'), 'wb+') as f:
+    with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'wb+') as f:
         pickle.dump({'sunsetTime': SUNSET_TIME}, f)
 
 
