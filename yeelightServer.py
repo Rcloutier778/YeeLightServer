@@ -16,7 +16,7 @@ import os.path
 import base64
 import platform
 from yeelightpython import DAY_COLOR, DUSK_COLOR, NIGHT_COLOR, SLEEP_COLOR, SUNRISE_TIME, \
-    WEEKEND_SUNRISE_TIME, SLEEP_TIME
+    WEEKEND_SUNRISE_TIME, SLEEP_TIME, global_writeState, writeManualOverride, readManualOverride
 
 HOMEDIR = __file__.rsplit(os.sep, 1)[0]
 # logging.basicConfig(filename=HOMEDIR+'serverLog.log',
@@ -70,14 +70,9 @@ class MyHandler(BaseHTTPRequestHandler):
         logger.info(data)
         try:
             if data["eventType"] == 'manual':
-                with open(os.path.join(HOMEDIR, data['user'] + '_manualOverride.txt'), 'w+') as f:
-                    f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
-                with open(os.path.join(HOMEDIR, 'bulbStateLog'), 'r+') as f:
-                    jdict = json.load(f)
-                    jdict['state'] = data["newState"]
-                    f.seek(0)
-                    json.dump(jdict, f)
-                    f.truncate()
+                writeManualOverride()
+                global_writeState(data["newState"])
+
         except Exception as e:
             logger.error(e)
         return
@@ -163,10 +158,8 @@ def GET_panel():
     
     doc.append('<img src="data:image/png;base64, %s">' % (
         base64.b64encode(open(temperaturePlotPic, 'rb').read()).decode('utf-8')))
-    
-    with open(os.path.join(HOMEDIR, 'richard_manualOverride.txt')) as f:
-        manualOverrideTime = datetime.datetime.strptime(f.read(), '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %I:%M:%S %p')
-    doc.append(manualOverrideTime)
+
+    doc.append(readManualOverride().strftime('%Y-%m-%d %I:%M:%S %p'))
     
     return doc
 

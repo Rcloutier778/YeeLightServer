@@ -43,10 +43,10 @@ ROOMS = {}
 phoneIP = None
 pcIP = None
 
-user = None
-
 phoneStatus = True
 pcStatus = True
+
+MANUAL_OVERRIDE_PATH = os.path.join(os.getcwd(), 'manualOverride.txt')
 
 bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset']
 commands = bulbCommands + ['run_server']
@@ -77,7 +77,6 @@ def main():
     global ROOMS
     global phoneIP
     global pcIP
-    global user
     '''
     import subprocess
 
@@ -94,33 +93,24 @@ def main():
         return
     else:
         cmd = sys.argv[1].lower()
-        usr = sys.argv[2].lower()
         
         if cmd in allcommands:
             if cmd in commands:
                 if 'autoset' not in cmd:
                     logger.info(cmd)
-                
-                if usr == 'richard':
-                    user = 'richard'
-                    bulbs = []
-                    assert all(bulb_ips in set( y for x in room_to_ips.values() for y in x) for bulb_ips in richard_bulb_ips)
-                    for roomName, ips in room_to_ips.items():
-                        
-                        blbs = []
-                        for ip in ips:
-                            bulb = yeelight.Bulb(ip)
-                            bulbs.append(bulb)
-                            blbs.append(bulb)
-                        ROOMS[roomName] = Room(roomName, blbs)
-                    phoneIP = "10.0.0.7"
-                    pcIP = "10.0.0.2"
-                else:  # make this elif then throw error w/ else
-                    # TODO Add vlad lights
-                    # bulbs=[vlad lights]
-                    # phoneIP=
-                    # pcIP=
-                    return
+                bulbs = []
+                assert all(bulb_ips in set( y for x in room_to_ips.values() for y in x) for bulb_ips in richard_bulb_ips)
+                for roomName, ips in room_to_ips.items():
+                    
+                    blbs = []
+                    for ip in ips:
+                        bulb = yeelight.Bulb(ip)
+                        bulbs.append(bulb)
+                        blbs.append(bulb)
+                    ROOMS[roomName] = Room(roomName, blbs)
+                phoneIP = "10.0.0.7"
+                pcIP = "10.0.0.2"
+
                 globals()[cmd]()
         elif cmd in ['bright', 'brightness']:
             if type(sys.argv[2]) == int:
@@ -270,10 +260,8 @@ class Room:
     def off(self, auto=False):
         if auto:
             # Check if system tray has been used recently to override autoset
-            with open(os.getcwd() + '/' + user + '_manualOverride.txt', 'r') as f:
-                ld = f.read().strip()
-            if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
-                    hours=1) > datetime.datetime.utcnow():
+            ld = readManualOverride()
+            if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
                 bulbLog.info("SystemTray used recently, canceling autoset")
                 return -1
             logger.info('autoset_auto off')
@@ -326,10 +314,8 @@ class Room:
         # If what called autoset is not a checkping event
         if not autoset_auto_var:
             # Check if system tray has been used recently to override autoset
-            with open(os.getcwd() + '/' + user + '_manualOverride.txt', 'r') as f:
-                ld = f.read().strip()
-            if datetime.datetime.strptime(ld, '%Y-%m-%d %H:%M:%S') + datetime.timedelta(
-                    hours=1) > datetime.datetime.utcnow():
+            ld = readManualOverride()
+            if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
                 logger.info("SystemTray used recently, canceling autoset")
                 return -1
         getCalcTimes()
@@ -485,7 +471,7 @@ def monitor_advert_bulbs(event, cond):
         if b'ssdp:discover' not in res:
             event.set()
             with cond:
-                logger.info("Dynamic bulb")
+                logger.info("Advertising bulb wake")
                 cond.notify()
     
 def monitor_bulb_static(event, cond):
@@ -713,9 +699,20 @@ def checkPing():
 
 
 
+def readManualOverride():
+    if os.path.exists(MANUAL_OVERRIDE_PATH):
+        with open(MANUAL_OVERRIDE_PATH, 'r') as f:
+            return datetime.datetime.strptime(f.read().strip(), '%Y-%m-%d %H:%M:%S')
+    else:
+        fake_date = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+        with open(MANUAL_OVERRIDE_PATH, 'w+') as f:
+            f.write(fake_date.strftime('%Y-%m-%d %H:%M:%S'))
+        return fake_date
+        
+
 
 def writeManualOverride():
-    with open(os.getcwd() + '/' + user + '_manualOverride.txt', 'w+') as f:
+    with open(MANUAL_OVERRIDE_PATH, 'w+') as f:
         f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
 
 def global_on():
@@ -763,8 +760,6 @@ def sunrise():
     
     for i in bulbs:
         i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
-        
-        
         
         
 def getNightRange():
