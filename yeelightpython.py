@@ -15,6 +15,7 @@ import yeelight.transitions
 
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 os.chdir(HOMEDIR)
+ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
 
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
@@ -126,8 +127,8 @@ class Room:
         self.bulbs = bulbs
         assert name in room_to_ips
         self.name = name
-        self.roomStatesDir = os.path.join(HOMEDIR, 'roomStates')
-        self.roomStatePath = os.path.join(self.roomStatesDir, self.name)
+        
+        self.roomStatePath = os.path.join(ROOM_STATES_DIR, self.name)
         self.state = None
 
 
@@ -142,10 +143,10 @@ class Room:
 
     def writeState(self, newState):
         "Write out the state of the bulbs in the room"
-        bulbLog.info(newState)
+        bulbLog.info('%s = %s', self.name, newState)
         self.state = newState
-        if not os.path.exists(self.roomStatesDir):
-            os.mkdir(self.roomStatesDir)
+        if not os.path.exists(ROOM_STATES_DIR):
+            os.mkdir(ROOM_STATES_DIR)
         
         prev_state_dict = {'state': None, 'pcStatus': None, 'phoneStatus': None}
         if os.path.exists(self.roomStatePath):
@@ -166,9 +167,9 @@ class Room:
         "Get the last written state of the bulbs in a room"
         validStates = ['day', 'dusk', 'night', 'off', 'sleep', 'on', 'color']
         
-        if not os.path.exists(self.roomStatesDir):
-            os.mkdir(self.roomStatesDir)
-        roomStatePath = os.path.join(self.roomStatesDir, self.name)
+        if not os.path.exists(ROOM_STATES_DIR):
+            os.mkdir(ROOM_STATES_DIR)
+        roomStatePath = os.path.join(ROOM_STATES_DIR, self.name)
         if not os.path.exists(roomStatePath):
             self.writeState('day')
             
@@ -393,6 +394,21 @@ def monitor_switches(event, cond, pipe):
     import atexit
     #import RPi.GPIO as GPIO
     from rpi_rf import RFDevice
+    import rtlsdr
+    
+    class RTLSDR(rtlsdr.RtlSdr):
+        def __init__(self):
+            super(rtlsdr.RtlSdr, self).__init__()
+        def __enter__(self):
+            pass
+        
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            self.close()
+    
+    
+    
+    
+    
     
     
     

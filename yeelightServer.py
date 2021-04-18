@@ -16,7 +16,8 @@ import os.path
 import base64
 import platform
 from yeelightpython import DAY_COLOR, DUSK_COLOR, NIGHT_COLOR, SLEEP_COLOR, SUNRISE_TIME, \
-    WEEKEND_SUNRISE_TIME, SLEEP_TIME, global_writeState, writeManualOverride, readManualOverride
+    WEEKEND_SUNRISE_TIME, SLEEP_TIME, global_writeState, writeManualOverride, readManualOverride, ROOM_STATES_DIR, \
+    getCalcTimes, getNightRange
 
 HOMEDIR = __file__.rsplit(os.sep, 1)[0]
 # logging.basicConfig(filename=HOMEDIR+'serverLog.log',
@@ -127,7 +128,7 @@ class MyHandler(BaseHTTPRequestHandler):
 def GET_panel():
     doc = []
     # PC/Phone status
-    with open(os.path.join(HOMEDIR, 'bulbStateLog'), 'r') as f:
+    with open(os.path.join(os.walk(ROOM_STATES_DIR)[0][2][0], 'bulbStateLog'), 'r') as f:
         bulbState = json.load(f)
     
     def onlineOffline(key):
@@ -165,10 +166,8 @@ def GET_panel():
 
 
 def createPlot():
-    with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
-        calcTimes = pickle.load(f)
-    with open(os.path.join(HOMEDIR, 'nightTimeRange.pickle'), 'rb') as f:
-        nightTimeRange = pickle.load(f)
+    calcTimes = getCalcTimes()
+    nightTimeRange = getNightRange()
     
     SUNSET_TIME = calcTimes['sunsetTime']
     SLEEP_TIME
