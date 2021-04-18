@@ -128,7 +128,7 @@ class MyHandler(BaseHTTPRequestHandler):
 def GET_panel():
     doc = []
     # PC/Phone status
-    with open(os.path.join(ROOM_STATES_DIR, list(os.walk(ROOM_STATES_DIR))[0][2][0], 'bulbStateLog'), 'r') as f:
+    with open(os.path.join(ROOM_STATES_DIR, list(os.walk(ROOM_STATES_DIR))[0][2][0]), 'r') as f:
         bulbState = json.load(f)
     
     def onlineOffline(key):
