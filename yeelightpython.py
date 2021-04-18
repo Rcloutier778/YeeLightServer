@@ -790,6 +790,7 @@ def getCalcTimes():
     with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
         calcTimes = pickle.load(f)
         SUNSET_TIME = calcTimes['sunsetTime']
+        return calcTimes
 
 
 def set_IRL_sunset():
