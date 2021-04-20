@@ -193,20 +193,20 @@ class Room:
         
         self.writeState('off')
         while True:
-            for i in [x for x in self.bulbs if x.get_properties()['power'] == 'on']:
+            for i in [x for x in self.bulbs if x.get_properties(['power'])['power'] == 'on']:
                 i.turn_off()
             # time.sleep(0.2)
-            if all(x.get_properties()['power'] == 'off' for x in self.bulbs):
+            if all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
                 break
     
     
     def on(self):
         self.writeState('on')
         while True:
-            for i in [x for x in self.bulbs if x.get_properties()['power'] == 'off']:
+            for i in [x for x in self.bulbs if x.get_properties(['power'])['power'] == 'off']:
                 i.turn_on()
             # time.sleep(0.2)
-            if all(x.get_properties()['power'] == 'on' for x in self.bulbs):
+            if all(x.get_properties(['power'])['power'] == 'on' for x in self.bulbs):
                 break
     
     
@@ -215,7 +215,7 @@ class Room:
         Doesn't use the built in toggle command in yeelight as it sometimes fails to toggle one of the lights.
         """
         
-        oldPower = self.bulbs[0].get_properties()['power']
+        oldPower = self.bulbs[0].get_properties(['power'])['power']
         if oldPower == 'off':
             self.on()
         else:
@@ -233,7 +233,7 @@ class Room:
     
     
     def autoset(self, autosetDuration=AUTOSET_DURATION, autoset_auto_var=False):
-        if all(x.get_properties()['power'] == 'off' for x in self.bulbs):
+        if all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
             logger.info('Power is off, cancelling autoset')
             return -1
         
