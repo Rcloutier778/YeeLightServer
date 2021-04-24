@@ -1,4 +1,5 @@
 import os
+import procname
 import time
 
 from yeelightLib import getLogger, phoneIP, pcIP
@@ -13,7 +14,7 @@ def checkPingThreaded(event, pipe, cond, pcStatus, phoneStatus):
     :param pipe:
     :return:
     """
-
+    procname.setprocname('checkPing')
     while True:
         try:
             res, pcStatus, phoneStatus = checkPing(pcStatus, phoneStatus)

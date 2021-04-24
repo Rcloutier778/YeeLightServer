@@ -2,6 +2,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import signal
 import platform
+import procname
 import urllib.parse
 from yeelightLib import *
 
@@ -26,6 +27,10 @@ def YeelightHTTP(event, cond, pipe):
             raise RuntimeError("Didn't receive answer in time")
     
     class YeelightHandler(BaseHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            procname.setprocname('http_server')
+            super(YeelightHandler, self).__init__(*args, **kwargs)
+
         def _set_headers(self):
             self.send_response(200)
             self.send_header('Content-type', 'text/html')

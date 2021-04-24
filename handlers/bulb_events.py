@@ -1,4 +1,5 @@
 import yeelight
+import procname
 import socket
 import struct
 import time
@@ -13,7 +14,7 @@ def monitor_advert_bulbs(event, cond):
     :param pipe:
     :return:
     """
-    
+    procname.setprocname('Advert bulbs')
     
     # Default yeelight multicast group and port
     MCAST_GRP = '239.255.255.250'
@@ -46,6 +47,7 @@ def monitor_bulb_static(event, cond):
     :param event:
     :return:
     """
+    procname.setprocname('Static bulbs')
     current_bulbs_ips = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs()))
     
     while True:

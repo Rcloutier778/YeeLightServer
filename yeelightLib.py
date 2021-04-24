@@ -55,6 +55,13 @@ formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
 actualLoggers = {}
 
+
+try:
+    from setproctitle import setproctitle as setprocname
+except ImportError:
+    def setprocname(name):
+        return
+
 def getLogger():
     global actualLoggers
     if actualLoggers.get('log'):

@@ -108,7 +108,7 @@ def monitor_switches(event, cond, pipe):
     :param cond:
     :return:
     """
-    
+    setprocname('Switches') 
     # This makes use of RPI gpio pins and a 433MHz radio receiver.
     logger.info('monitor switches')
     from influxdb import InfluxDBClient
@@ -144,7 +144,7 @@ def monitor_switches(event, cond, pipe):
     
     atexit.register(cleanup)
     
-    signal.signal(signal.SIGTERM, sys.exit)
+    signal.signal(signal.SIGTERM, cleanup)
     while True:
         line, _addr = sock.recvfrom(1024)
         try:
@@ -228,6 +228,7 @@ class Server(object):
     """
     
     def __init__(self):
+        setprocname('Lights server')
         set_IRL_sunset()
         for room in ROOMS.values():
             room.resetFromLoggedState()
@@ -365,7 +366,7 @@ class Server(object):
                             if tmp_bulbs:
                                 self.http_pipe.send(tmp_bulbs[0].get_properties([self.http_res['properties']]))
                 else:
-                    global_action('on')
+                    logger.info('Timer wake')
                     global_action('autoset', AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
     
                 if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
