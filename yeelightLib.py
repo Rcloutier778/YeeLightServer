@@ -2,7 +2,7 @@ import datetime
 import logging
 import os
 import pickle
-
+from logging.handlers import RotatingFileHandler
 
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
@@ -13,9 +13,10 @@ pcIP = "10.0.0.2"
 
 MANUAL_OVERRIDE_PATH = os.path.join(os.getcwd(), 'manualOverride.txt')
 
-bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset']
+bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb']
+
 commands = bulbCommands + ['run_server']
-allcommands = commands + ['bright', 'brightness', 'rgb']
+allcommands = commands + ['bright', 'brightness']
 
 DAY_COLOR = 4000
 DUSK_COLOR = 3300
@@ -38,6 +39,18 @@ PREDEF_STATES = {'day': [DAY_COLOR, DAY_BRIGHTNESS],
 
 AUTOSET_DURATION = 300000
 
+# Legacy server, probably will be decommed at some point
+LEGACY_SERVER_PORT_NUMBER = 9000
+
+# REST API server port
+REST_SERVER_PORT_NUMBER = 9001
+
+# JS file host port
+JS_SERVER_PORT = 9002
+
+
+
+
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
 actualLoggers = {}
@@ -47,9 +60,11 @@ def getLogger():
     if actualLoggers.get('log'):
         return actualLoggers.get('log')
     
+    
+    
     logger = logging.getLogger('log')
     logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(os.path.join(HOMEDIR, 'log.log'), 'a+')
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'log.log'), mode='a+', maxBytes=1024)
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
@@ -63,7 +78,7 @@ def getBulbLogger():
         return actualLoggers.get('bulbLog')
     bulbLog = logging.getLogger('bulbLog')
     bulbLog.setLevel(logging.DEBUG)
-    fh = logging.FileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), 'a+')
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), mode='a+', maxBytes=1024)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     bulbLog.addHandler(fh)

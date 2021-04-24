@@ -221,6 +221,12 @@ class Room:
         else:
             self.off()
     
+    def rgb(self, red, green, blue):
+        transition = yeelight.RGBTransition(red=red, green=green, blue=blue)
+        for i in self.bulbs:
+            i.start_flow(yeelight.Flow(count=1,
+                                       action=yeelight.Flow.actions.stay,
+                                       transitions=[transition]))
     
     def colorTempFlow(self, temperature=3200, duration=3000, brightness=80):
         # control all lights at once

@@ -345,20 +345,23 @@ class Server(object):
                     if self.http_res['eventType'] == 'manual':
                         global_writeState(self.http_res["action"])
                         continue
-                        
-                    if self.http_res['room'] == 'global':
-                        logger.info('global http')
+                    elif self.http_res['eventType'] == 'dashboard-action':
                         if self.http_res['action'] not in bulbCommands:
-                            logger.error('Received %s as a global command, which is not a valid command!' % self.http_res['action'])
+                            logger.error('Received %s as a command, which is not a valid command!' % self.http_res['action'])
                             continue
-                        global_action(self.http_res['action'])
-                    else:
-                        logger.info('Room level http')
-                        
-                        getattr(ROOMS[self.http_res['room']], self.http_res['action'])()
-                        
-                        
-                        
+                        if self.http_res['room'] == 'global':
+                            logger.info('global http')
+                            global_action(self.http_res['action'], **self.http_res['kwargs'])
+                        else:
+                            logger.info('Room level http')
+                            getattr(ROOMS[self.http_res['room']], self.http_res['action'])(**self.http_res['kwargs'])
+                    elif self.http_res['eventType'] == 'dashboard-query':
+                        logger.info('dashboard-query')
+                        if self.http_res['query'] == 'getProperty':
+                            logger.info('getProperty')
+                            tmp_bulbs = ROOMS[self.http_res['room']].bulbs
+                            if tmp_bulbs:
+                                self.http_pipe.send(tmp_bulbs[0].get_properties([self.http_res['properties']]))
                 else:
                     global_action('on')
                     global_action('autoset', AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
@@ -366,7 +369,7 @@ class Server(object):
                 if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
                     systemStartTime = datetime.datetime.utcnow()
                     set_IRL_sunset()
-            except:
+            except Exception:
                 logger.exception("Exception in server run loop!")
 
 

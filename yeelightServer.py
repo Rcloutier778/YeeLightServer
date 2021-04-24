@@ -6,6 +6,7 @@ import pickle
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from logging.handlers import RotatingFileHandler
 
 import matplotlib
 
@@ -30,7 +31,7 @@ HOMEDIR = __file__.rsplit(os.sep, 1)[0]
 
 logger = logging.getLogger('serverLog')
 logger.setLevel(logging.INFO)
-fh = logging.FileHandler(os.path.join(HOMEDIR, 'serverLog.log'), 'a+')
+fh = RotatingFileHandler(os.path.join(HOMEDIR, 'serverLog.log'), mode='a+', maxBytes=1024)
 fh.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 fh.setFormatter(formatter)
@@ -224,17 +225,15 @@ if __name__ == '__main__':
         exit(0)
     if 'Windows' in platform.platform():
         HOST_NAME = '10.0.0.2'  #
-        PORT_NUMBER = 9000
     else:
         HOST_NAME = '10.0.0.17'
-        PORT_NUMBER = 9000
     
     server_class = HTTPServer
-    httpd = server_class((HOST_NAME, PORT_NUMBER), MyHandler)
-    logger.info('Server Starts - %s:%s' % (HOST_NAME, PORT_NUMBER))
+    httpd = server_class((HOST_NAME, LEGACY_SERVER_PORT_NUMBER), MyHandler)
+    logger.info('Server Starts - %s:%s' % (HOST_NAME, LEGACY_SERVER_PORT_NUMBER))
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
         pass
     httpd.server_close()
-    logger.info('Server Stops - %s:%s' % (HOST_NAME, PORT_NUMBER))
+    logger.info('Server Stops - %s:%s' % (HOST_NAME, LEGACY_SERVER_PORT_NUMBER))

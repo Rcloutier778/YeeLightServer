@@ -1,3 +1,6 @@
+/*
+Send a bulb action to the REST api
+*/
 function send_action(self){
     url='http://10.0.0.17:9001';
     body = {"eventType":"dashboard",
