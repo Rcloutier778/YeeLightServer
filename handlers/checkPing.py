@@ -15,11 +15,14 @@ def checkPingThreaded(event, pipe, cond, pcStatus, phoneStatus):
     """
 
     while True:
-        res, pcStatus, phoneStatus = checkPing(pcStatus, phoneStatus)
-        pipe.send([phoneStatus, pcStatus, res])
-        event.set()
-        with cond:
-            cond.notify()
+        try:
+            res, pcStatus, phoneStatus = checkPing(pcStatus, phoneStatus)
+            pipe.send([phoneStatus, pcStatus, res])
+            event.set()
+            with cond:
+                cond.notify()
+        except:
+            logger.exception('Exception in checkping!')
 
 
 def checkPing(pcStatus, phoneStatus):

@@ -5,7 +5,7 @@ import platform
 import urllib.parse
 from yeelightLib import *
 
-logger = getLogger()
+logger = None
 
 def YeelightHTTP(event, cond, pipe):
     def getProperty(room, *properties):
@@ -128,13 +128,15 @@ def YeelightHTTP(event, cond, pipe):
 
 
 def http_server(event, cond, pipe):
+    global logger
+    logger = getLogger()
     logger.info('http_server')
     HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.17'
     httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
     logger.info('got httpd')
     import subprocess
     
-    proc = subprocess.Popen(['http-server', os.path.join(HOMEDIR, 'js') + os.sep, '-p', JS_SERVER_PORT])
+    proc = subprocess.Popen(['http-server', os.path.join(HOMEDIR, 'js') + os.sep, '-p', str(JS_SERVER_PORT)])
     
     def cleanup(*args, **kwargs):
         proc.kill()
@@ -142,12 +144,13 @@ def http_server(event, cond, pipe):
         
     signal.signal(signal.SIGTERM, cleanup)
     logger.info('Starting server on %s:%d', HOST_NAME, REST_SERVER_PORT_NUMBER)
-    try:
-        httpd.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    except Exception:
-        logger.exception("Error in server")
-        raise
+    while True:
+        try:
+            httpd.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        except Exception:
+            logger.exception("Error in server")
+
     cleanup()
 

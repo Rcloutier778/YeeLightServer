@@ -271,7 +271,7 @@ class Server(object):
         self.ping_pipe.close()
         self.switch_pipe.close()
         self.http_pipe.close()
-        for roomName, room in ROOMS.items():
+        for room in ROOMS.values():
             room.graceful_kill()
             
         sys.exit(0)

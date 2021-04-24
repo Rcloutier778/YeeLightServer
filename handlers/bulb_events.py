@@ -29,13 +29,16 @@ def monitor_advert_bulbs(event, cond):
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
     
     while True:
-        res = sock.recv(10240)
-        # ssdb:discover is a hallmark of yeelight.discover_bulbs(), which is what we send in static search.
-        if b'ssdp:discover' not in res:
-            event.set()
-            with cond:
-                logger.info("Advertising bulb wake")
-                cond.notify()
+        try:
+            res = sock.recv(10240)
+            # ssdb:discover is a hallmark of yeelight.discover_bulbs(), which is what we send in static search.
+            if b'ssdp:discover' not in res:
+                event.set()
+                with cond:
+                    logger.info("Advertising bulb wake")
+                    cond.notify()
+        except:
+            logger.exception('Got exception in advert bulb!')
 
 def monitor_bulb_static(event, cond):
     """
@@ -46,24 +49,27 @@ def monitor_bulb_static(event, cond):
     current_bulbs_ips = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs()))
     
     while True:
-        found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(1)))
-        if current_bulbs_ips != found_bulbs_ip:
-            # Retry 3 times. Sometimes a bulb doesn't respond for whatever reason.
-            for _ in range(3):
-                tmp_found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2)))
-                if tmp_found_bulbs_ip == current_bulbs_ips:
-                    break
-            else:
-                new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
-                missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
-                for new_ip in new_ips:
-                    logger.info('Found new bulb at ip addr: %s', new_ip)
-                for missing_ip in missing_ips:
-                    logger.info('Missing bulb at ip addr: %s', missing_ip)
-                
-                current_bulbs_ips = found_bulbs_ip
-                event.set()
-                with cond:
-                    logger.info("Static bulb")
-                    cond.notify()
-        time.sleep(60)
+        try:
+            found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(1)))
+            if current_bulbs_ips != found_bulbs_ip:
+                # Retry 3 times. Sometimes a bulb doesn't respond for whatever reason.
+                for _ in range(3):
+                    tmp_found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2)))
+                    if tmp_found_bulbs_ip == current_bulbs_ips:
+                        break
+                else:
+                    new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
+                    missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+                    for new_ip in new_ips:
+                        logger.info('Found new bulb at ip addr: %s', new_ip)
+                    for missing_ip in missing_ips:
+                        logger.info('Missing bulb at ip addr: %s', missing_ip)
+                    
+                    current_bulbs_ips = found_bulbs_ip
+                    event.set()
+                    with cond:
+                        logger.info("Static bulb")
+                        cond.notify()
+            time.sleep(60)
+        except:
+            logger.exception("Got exception in static bulb")
