@@ -222,6 +222,9 @@ class Room:
             self.off()
     
     def rgb(self, red, green, blue):
+        red = int(red)
+        green = int(green)
+        blue = int(blue)
         transition = yeelight.RGBTransition(red=red, green=green, blue=blue)
         for i in self.bulbs:
             i.start_flow(yeelight.Flow(count=1,

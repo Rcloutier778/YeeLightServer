@@ -105,6 +105,7 @@ def YeelightHTTP(event, cond, pipe):
                 }
                 del data['room']
                 del data['newState']
+                del data['eventType']
                 pipe_data['kwargs'] = data
                 pipe.send(pipe_data)
                 event.set()

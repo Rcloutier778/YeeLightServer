@@ -239,7 +239,7 @@ class Server(object):
 
         self.ping_event = mp.Event()
         self.ping_pipe, ping_child_pipe = mp.Pipe()
-        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, ping_child_pipe, self.wake_condition,))
+        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, ping_child_pipe, self.wake_condition,pcStatus, phoneStatus,))
         self.ping_res = True
         self.timer_wake = False
         
@@ -271,7 +271,7 @@ class Server(object):
         self.ping_pipe.close()
         self.switch_pipe.close()
         self.http_pipe.close()
-        for roomName, room in ROOMS:
+        for roomName, room in ROOMS.items():
             room.graceful_kill()
             
         sys.exit(0)
@@ -371,6 +371,7 @@ class Server(object):
                     set_IRL_sunset()
             except Exception:
                 logger.exception("Exception in server run loop!")
+                rebuild_bulbs()
 
 
 def run_server():
