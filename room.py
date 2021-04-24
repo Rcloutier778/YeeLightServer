@@ -241,13 +241,13 @@ class Room:
                                        transitions=[transition]))
     
     
-    def autoset(self, autosetDuration=AUTOSET_DURATION, autoset_auto_var=False):
-        if all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
+    def autoset(self, autosetDuration=AUTOSET_DURATION, autoset_auto_var=False, force=False):
+        if not False and all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
             logger.info('Power is off, cancelling autoset')
             return -1
         
         # If what called autoset is not a checkping event
-        if not autoset_auto_var:
+        if not force or not autoset_auto_var:
             # Check if system tray has been used recently to override autoset
             ld = readManualOverride()
             if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():

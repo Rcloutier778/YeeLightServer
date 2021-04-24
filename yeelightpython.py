@@ -349,6 +349,8 @@ class Server(object):
                         if self.http_res['action'] not in bulbCommands:
                             logger.error('Received %s as a command, which is not a valid command!' % self.http_res['action'])
                             continue
+                        if self.http_res['action'] == 'autoset':
+                            self.http_res['kwargs']['force'] = True
                         if self.http_res['room'] == 'global':
                             logger.info('global http')
                             global_action(self.http_res['action'], **self.http_res['kwargs'])
