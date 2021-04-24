@@ -247,11 +247,11 @@ class Room:
             return -1
         
         # If what called autoset is not a checkping event
-        if not force or not autoset_auto_var:
+        if not force and not autoset_auto_var:
             # Check if system tray has been used recently to override autoset
             ld = readManualOverride()
             if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
-                logger.info("SystemTray used recently, canceling autoset")
+                logger.info("Autoset: SystemTray used recently, canceling autoset")
                 return -1
         getCalcTimes()
         
