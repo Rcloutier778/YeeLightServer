@@ -22,6 +22,7 @@ from yeelightLib import *
 from room import Room
 from handlers.checkPing import checkPingThreaded
 from handlers.bulb_events import monitor_advert_bulbs, monitor_bulb_static
+from handlers.switches import monitor_switches
 from handlers.http_events import http_server
 
 
@@ -101,120 +102,6 @@ def rebuild_bulbs():
         bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
 
 
-def monitor_switches(event, cond, pipe):
-    """
-    Monitors 433MHz radio for switch event.
-    :param event:
-    :param cond:
-    :return:
-    """
-    setprocname('Switches') 
-    # This makes use of RPI gpio pins and a 433MHz radio receiver.
-    logger.info('monitor switches')
-    from influxdb import InfluxDBClient
-    import socket
-    import atexit
-    import subprocess
-
-    rtl_port = 1433
-    
-
-    #client = InfluxDBClient(database='yeelight_switch', host='127.0.0.1', port=8086)
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.bind(('127.0.0.1', rtl_port))
-    
-    def parse_syslog(line):
-        """Try to extract the payload from a syslog line."""
-        line = line.decode("ascii")  # also UTF-8 if BOM
-        if line.startswith("<"):
-            # fields should be "<PRI>VER", timestamp, hostname, command, pid, mid, sdata, payload
-            fields = line.split(None, 7)
-            line = fields[-1]
-        return line
-    
-    def sanitize(text):
-        return text.replace(" ", "_").replace("/", "_").replace(".", "_").replace("&", "")
-    
-    proc = subprocess.Popen(['rtl_433', '-X', "'n=name,m=OOK_PWM,s=260,l=744,r=7784,g=736,t=194,y=0'", '-F', 'syslog::%d'%rtl_port ])
-    
-    def cleanup():
-        #client.close()
-        proc.terminate()
-    
-    
-    atexit.register(cleanup)
-    
-    signal.signal(signal.SIGTERM, cleanup)
-    while True:
-        line, _addr = sock.recvfrom(1024)
-        try:
-            line = parse_syslog(line)
-            data = json.loads(line)
-            
-            if "model" not in data:
-                continue
-            measurement = sanitize(data["model"])
-            logger.info(data)
-            """
-            tags = {}
-            for tag in TAGS:
-                if tag in data:
-                    tags[tag] = data[tag]
-            
-            fields = {}
-            for field in FIELDS:
-                if field in data:
-                    fields[field] = data[field]
-            
-            if len(fields) == 0:
-                continue
-            
-            point = {
-                "measurement": measurement,
-                "time": datetime.now().isoformat(),
-                "tags": tags,
-                "fields": fields,
-            }
-            
-            try:
-                client.write_points([point])
-            except Exception:
-                logger.exception("error writing {}".format(point))
-            """
-        except KeyError:
-            pass
-        
-        except ValueError:
-            pass
-    
-    
-    
-    #rtl_433
-    
-    
-    
-    
-    
-    # TODO
-    # { Room : [ (pin, action) ] }
-    #{'Bedroom': [], 'LivingRoom': []}
-    
-    
-    """
-    while True:
-        for switch in rf_switches:
-            if switch.check():
-                # TODO dimming
-                pipe.send((switch.room, switch.action))
-                
-                event.set()
-                with cond:
-                    logger.info("433 MHz received")
-                    cond.notify()
-        time.sleep(1)
-    """
-    
-        
 class Server(object):
     """
     Acts as a server.
@@ -247,7 +134,7 @@ class Server(object):
         self.switch_event = mp.Event()
         self.switch_pipe, switch_child_pipe = mp.Pipe()
         self.monitor_switches_proc = mp.Process(target=monitor_switches, args=(self.switch_event, self.wake_condition, switch_child_pipe, ))
-        self.switch_res = None
+        self.switch_room = None
         self.switch_action = None
        
         self.http_event = mp.Event()
@@ -289,6 +176,7 @@ class Server(object):
         Resolve whatever event woke the main thread
         :return:
         """
+        global phoneStatus, pcStatus
         logger.info("Resolving wake")
         if self.bulb_event.is_set():
             logger.info("Resolving bulb event")
@@ -303,13 +191,12 @@ class Server(object):
             self.ping_event.clear()
         if self.switch_event.is_set():
             logger.info("Resolving switch event")
-            self.switch_res, self.switch_action = self.switch_pipe.recv()
+            self.switch_room, self.switch_action = self.switch_pipe.recv()
             self.switch_event.clear()
         if self.http_event.is_set():
             logger.info("Resolving http event")
             self.http_res = self.http_pipe.recv()
             self.http_event.clear()
-            
     
     def run(self):
         """
@@ -326,7 +213,7 @@ class Server(object):
         while True:
             try:
                 self.timer_wake = True
-                self.switch_res, self.switch_action = None, None
+                self.switch_room, self.switch_action = None, None
                 self.http_res = None
                 with self.wake_condition:
                     self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
@@ -334,12 +221,17 @@ class Server(object):
                         self.resolve_wake()
                 logger.info("Woke up")
                 if not self.ping_res:
-                    global_action('off', True)
-                elif self.switch_res:
-                    if self.switch_res not in ROOMS:
-                        logger.error('Received %s from switch_res, which is not in %s', self.switch_res, ', '.join(ROOMS))
+                    # Temp fix for PC not having a valid IP address on waking from sleep.
+                    sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p').time()
+                    if datetime.datetime.now().time() >= sunrise_time and datetime.datetime.now().time() <= sunrise_time + datetime.timedelta(hours=1):
                         continue
-                    ROOMS[self.switch_res].command(self.switch_action)
+                    global_action('off', True)
+                elif self.switch_room:
+                    if self.switch_room not in ROOMS:
+                        logger.error('Received %s from switch_room, which is not in %s', self.switch_room, ', '.join(ROOMS))
+                        continue
+                    kwargs = {'force':True} if self.switch_action == 'autoset' else {}
+                    getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
                     
                 elif self.http_res is not None:
                     logger.info('http')

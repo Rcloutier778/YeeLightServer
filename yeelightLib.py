@@ -45,12 +45,6 @@ LEGACY_SERVER_PORT_NUMBER = 9000
 # REST API server port
 REST_SERVER_PORT_NUMBER = 9001
 
-# JS file host port
-JS_SERVER_PORT = 9002
-
-
-
-
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
 actualLoggers = {}
@@ -71,7 +65,7 @@ def getLogger():
     
     logger = logging.getLogger('log')
     logger.setLevel(logging.INFO)
-    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'log.log'), mode='a+', maxBytes=1024)
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'log.log'), maxBytes=1024)
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
@@ -85,7 +79,7 @@ def getBulbLogger():
         return actualLoggers.get('bulbLog')
     bulbLog = logging.getLogger('bulbLog')
     bulbLog.setLevel(logging.DEBUG)
-    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), mode='a+', maxBytes=1024)
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     bulbLog.addHandler(fh)

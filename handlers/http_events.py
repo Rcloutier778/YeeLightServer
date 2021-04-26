@@ -1,8 +1,8 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import signal
+import sys
 import platform
-import procname
 import urllib.parse
 from yeelightLib import *
 
@@ -28,7 +28,7 @@ def YeelightHTTP(event, cond, pipe):
     
     class YeelightHandler(BaseHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
-            procname.setprocname('http_server')
+            setprocname('http_server')
             super(YeelightHandler, self).__init__(*args, **kwargs)
 
         def _set_headers(self):
@@ -139,13 +139,11 @@ def http_server(event, cond, pipe):
     HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.17'
     httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
     logger.info('got httpd')
-    import subprocess
-    
-    proc = subprocess.Popen(['http-server', os.path.join(HOMEDIR, 'js') + os.sep, '-p', str(JS_SERVER_PORT)])
     
     def cleanup(*args, **kwargs):
-        proc.kill()
         httpd.server_close()
+        logger.info('http-server closed')
+        sys.exit(0)
         
     signal.signal(signal.SIGTERM, cleanup)
     logger.info('Starting server on %s:%d', HOST_NAME, REST_SERVER_PORT_NUMBER)
