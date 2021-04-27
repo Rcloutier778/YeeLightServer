@@ -222,8 +222,8 @@ class Server(object):
                 logger.info("Woke up")
                 if not self.ping_res:
                     # Temp fix for PC not having a valid IP address on waking from sleep.
-                    sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p').time()
-                    if datetime.datetime.now().time() >= sunrise_time and datetime.datetime.now().time() <= sunrise_time + datetime.timedelta(hours=1):
+                    sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p')
+                    if datetime.datetime.now().time() >= sunrise_time.time() and datetime.datetime.now().time() <= (sunrise_time + datetime.timedelta(hours=1)).time():
                         continue
                     global_action('off', True)
                 elif self.switch_room:
