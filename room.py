@@ -33,6 +33,7 @@ class Room:
 
     def writeState(self, newState):
         "Write out the state of the bulbs in the room"
+        global pcStatus, phoneStatus
         bulbLog.info('%s = %s', self.name, newState)
         self.state = newState
         if not os.path.exists(ROOM_STATES_DIR):

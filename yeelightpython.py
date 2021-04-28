@@ -36,9 +36,6 @@ bulbs = []
 
 ROOMS = {}
 
-phoneStatus = True
-pcStatus = True
-
 def main():
     # logger.info(desk.get_properties())
     global bulbs

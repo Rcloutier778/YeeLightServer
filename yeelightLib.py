@@ -45,6 +45,9 @@ LEGACY_SERVER_PORT_NUMBER = 9000
 # REST API server port
 REST_SERVER_PORT_NUMBER = 9001
 
+pcStatus = True
+phoneStatus = True
+
 formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
 
 actualLoggers = {}
