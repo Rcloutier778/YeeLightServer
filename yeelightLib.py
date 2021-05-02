@@ -179,5 +179,11 @@ def set_IRL_sunset():
         pickle.dump(returnRange, f)
     with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'wb+') as f:
         pickle.dump({'sunsetTime': SUNSET_TIME}, f)
-        
-        
+
+#class Bulb(yeelight.Bulb):
+#    def __init__(self, *args, **kwargs):
+#        super(yeelight.Bulb, self).__init__(*args, **kwargs)
+
+    
+
+

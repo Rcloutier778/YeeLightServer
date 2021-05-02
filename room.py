@@ -31,6 +31,13 @@ class Room:
                                    password = open('/home/richard/aqm/sensor/influx.secret','r').read().strip()
                                    ) if 'Windows' not in platform.platform() else None
 
+    def rebuild_bulbs(self):
+        found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
+        current_bulb_ips = sorted(bulb._ip for bulb in self.bulbs)
+        if current_bulb_ips != found_bulb_ips:
+            logger.info('Different bulbs!')
+            self.bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulb_ips]
+
     def writeState(self, newState):
         "Write out the state of the bulbs in the room"
         global pcStatus, phoneStatus

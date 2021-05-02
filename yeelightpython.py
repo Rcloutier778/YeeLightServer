@@ -71,9 +71,7 @@ def main():
                         bulbs.append(bulb)
                         blbs.append(bulb)
                     ROOMS[roomName] = Room(roomName, blbs)
-                if cmd in ('on','off','autoset'):
-                    cmd = 'global_%s'%cmd
-                globals()[cmd]()
+                globals()['global_action'](cmd)
         elif cmd in ['bright', 'brightness']:
             if type(sys.argv[2]) == int:
                 logger.info("Changing brightness to %d" % int(sys.argv[2]))
@@ -86,7 +84,7 @@ def main():
 def rebuild_bulbs():
     "Rebuild the bulb list."
     global bulbs
-    found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2))
+    found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
     current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
     if current_bulbs_ips != found_bulbs_ip:
         new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
@@ -97,6 +95,8 @@ def rebuild_bulbs():
             logger.info('Missing bulb at ip addr: %s', missing_ip)
             
         bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
+        for room in ROOMS.values():
+            room.rebuild_bulbs()
 
 
 class Server(object):
@@ -207,6 +207,7 @@ class Server(object):
         self.monitor_switches_proc.start()
         self.http_proc.start()
         systemStartTime = datetime.datetime.utcnow()
+        global_action('autoset')
         while True:
             try:
                 self.timer_wake = True

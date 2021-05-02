@@ -3,7 +3,7 @@ import socket
 import struct
 import time
 
-from yeelightLib import getLogger, setprocname
+from yeelightLib import * 
 logger = getLogger()
 
 def monitor_advert_bulbs(event, cond):
@@ -55,7 +55,7 @@ def monitor_bulb_static(event, cond):
             if current_bulbs_ips != found_bulbs_ip:
                 # Retry 3 times. Sometimes a bulb doesn't respond for whatever reason.
                 for _ in range(3):
-                    tmp_found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(0.2)))
+                    tmp_found_bulbs_ip = sorted(set(bulb['ip'] for bulb in yeelight.discover_bulbs(0.8)))
                     if tmp_found_bulbs_ip == current_bulbs_ips:
                         break
                 else:
@@ -74,3 +74,26 @@ def monitor_bulb_static(event, cond):
             time.sleep(60)
         except:
             logger.exception("Got exception in static bulb")
+
+
+def monitor_ping(event, cond):
+    setprocnames('Ping bulbs')
+    import subprocess
+    cmd = 'while ping -c 1 -W 2 %s >/dev/null 2>&1; do sleep 2 ; done;'
+    proc_dict = {}
+    for ip in BULB_IPS:
+        proc_dict[ip] = subprocess.Popen((cmd % ip).split(' '))
+
+    while True:
+        for ip, proc in proc_dict.items():
+            if proc.poll() is not None:
+                proc.communicate()
+                event.set()
+                with cond:
+                    logger.info("ping bulb %s", ip)
+                    cond.notify()
+                time.sleep(60)
+                proc_dict[ip] = subprocess.Popen((cmd % ip).split(' '))
+
+
+
