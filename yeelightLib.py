@@ -11,7 +11,7 @@ room_to_ips = {'Bedroom': ["10.0.0.5", "10.0.0.10", "10.0.0.15"]}
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 
-MANUAL_OVERRIDE_PATH = os.path.join(os.getcwd(), 'manualOverride.txt')
+MANUAL_OVERRIDE_PATH = os.path.join(HOMEDIR, 'manualOverride.txt')
 
 bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb']
 
