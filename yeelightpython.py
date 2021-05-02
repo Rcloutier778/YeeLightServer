@@ -34,7 +34,7 @@ bulbLog = getBulbLogger()
 
 bulbs = []
 
-ROOMS = {}
+ROOMS = {roomName : Room(roomName, [yeelight.Bulb(ip) for ip in ips]) for roomName, ips in room_to_ips.items()}
 
 def main():
     # logger.info(desk.get_properties())
@@ -71,7 +71,10 @@ def main():
                         bulbs.append(bulb)
                         blbs.append(bulb)
                     ROOMS[roomName] = Room(roomName, blbs)
-                globals()['global_action'](cmd)
+                if cmd == 'run_server':
+                    run_server()
+                else:
+                    globals()['global_action'](cmd)
         elif cmd in ['bright', 'brightness']:
             if type(sys.argv[2]) == int:
                 logger.info("Changing brightness to %d" % int(sys.argv[2]))
@@ -280,7 +283,13 @@ def global_action(action, *args, **kwargs):
         logger.error('%s is not a valid global action!', action)
         return
     for room in ROOMS.values():
-        getattr(room, action)(*args, **kwargs)
+        for attempt in range(3):
+            try:
+                getattr(room, action)(*args, **kwargs)
+            except Exception as e:
+                logger.warn('Failed to execute %s on try %d for %s', action, attempt, room.name)
+        else:
+            raise(e)
         
         
 def sunrise():
