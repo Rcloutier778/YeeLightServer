@@ -57,6 +57,7 @@ class Room:
                 and phoneStatus == prev_state_dict['phoneStatus']):
             
             new_state_dict = {'state': newState, 'pcStatus': pcStatus, 'phoneStatus': phoneStatus}
+            logger.info('Writing state dict for %s as %s', self.name, str(new_state_dict))
             with open(self.roomStatePath, 'w+') as f:
                 json.dump(new_state_dict, f)
                 f.truncate()
@@ -124,7 +125,7 @@ class Room:
         self.state = state
         phoneStatus = jdict['phoneStatus']
         pcStatus = jdict['pcStatus']
-        
+        logger.info('Restting %s to last state of %s', self.name, state)
         if state == 'day':
             self.day()
         elif state == 'dusk':
@@ -144,7 +145,7 @@ class Room:
             self.customTempFlow(int(temperature), brightness=int(brightness))
     
     def graceful_kill(self):
-        logger.info('In shutdown')
+        logger.info('Shutting down %s', self.name)
         self.writeState(self.state)
     
     def brightness(self, val):

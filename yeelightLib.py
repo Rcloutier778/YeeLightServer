@@ -62,7 +62,9 @@ except ImportError:
 def getLogger():
     global actualLoggers
     if actualLoggers.get('log'):
-        return actualLoggers.get('log')
+        logger = actualLoggers.get('log')
+        logger.info('Logging to %s', os.path.join(HOMEDIR, 'log.log'))
+        return logger
     
     
     
@@ -73,6 +75,7 @@ def getLogger():
     fh.setFormatter(formatter)
     logger.addHandler(fh)
     actualLoggers['log'] = logger
+    logger.info('Logging to %s', os.path.join(HOMEDIR, 'log.log'))
     return logger
 
 

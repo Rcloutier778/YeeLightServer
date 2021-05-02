@@ -71,13 +71,3 @@ def monitor_switches(event, cond, pipe):
             pass
 
 
-
-
-
-
-
-#TODO
-# testing
-if __name__ == '__main__':
-    monitor_switches(None, None, None)
-

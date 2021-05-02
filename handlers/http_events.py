@@ -108,7 +108,8 @@ def YeelightHTTP(event, cond, pipe):
                     'action': data['newState'],
                     'eventType': data['eventType']
                 }
-                del data['room']
+                if 'room' in data:
+                    del data['room']
                 del data['newState']
                 del data['eventType']
                 pipe_data['kwargs'] = data
@@ -135,10 +136,8 @@ def YeelightHTTP(event, cond, pipe):
 def http_server(event, cond, pipe):
     global logger
     logger = getLogger()
-    logger.info('http_server')
     HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.17'
     httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
-    logger.info('got httpd')
     
     def cleanup(*args, **kwargs):
         httpd.server_close()

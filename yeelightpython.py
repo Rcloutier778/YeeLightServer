@@ -149,6 +149,7 @@ class Server(object):
         Gracefully shut down the server, closing pipes, killing child procs, writing out states.
         :return:
         """
+        logger.info('Gracefully shutting down lights server')
         for room in ROOMS.values():
             room.influx_client.close()
         self.monitor_bulb_static_proc.kill()
@@ -210,7 +211,11 @@ class Server(object):
         self.monitor_switches_proc.start()
         self.http_proc.start()
         systemStartTime = datetime.datetime.utcnow()
-        global_action('autoset')
+        logger.info('before')
+        try:
+            global_action('autoset')
+        except:
+            logger.exception('test')
         while True:
             try:
                 self.timer_wake = True
@@ -233,9 +238,9 @@ class Server(object):
                         continue
                     kwargs = {'force':True} if self.switch_action == 'autoset' else {}
                     getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
-                    
                 elif self.http_res is not None:
                     logger.info('http')
+                    logger.info(self.http_res['eventType'])
                     if self.http_res['eventType'] == 'manual':
                         global_writeState(self.http_res["action"])
                         continue
@@ -286,6 +291,7 @@ def global_action(action, *args, **kwargs):
         for attempt in range(3):
             try:
                 getattr(room, action)(*args, **kwargs)
+                break
             except Exception as e:
                 logger.warn('Failed to execute %s on try %d for %s', action, attempt, room.name)
         else:
