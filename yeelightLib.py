@@ -61,21 +61,20 @@ except ImportError:
 
 def getLogger():
     global actualLoggers
+    logpath = os.path.join(HOMEDIR, 'log.log')
     if actualLoggers.get('log'):
         logger = actualLoggers.get('log')
-        logger.info('Logging to %s', os.path.join(HOMEDIR, 'log.log'))
+        logger.info('Logging to %s', logpath)
         return logger
-    
-    
     
     logger = logging.getLogger('log')
     logger.setLevel(logging.INFO)
-    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'log.log'), maxBytes=1024)
+    fh = RotatingFileHandler(logpath, maxBytes=1024)
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
     actualLoggers['log'] = logger
-    logger.info('Logging to %s', os.path.join(HOMEDIR, 'log.log'))
+    logger.info('Logging to %s', logpath)
     return logger
 
 

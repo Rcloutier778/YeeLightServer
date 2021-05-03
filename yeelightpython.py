@@ -73,6 +73,8 @@ def main():
                     ROOMS[roomName] = Room(roomName, blbs)
                 if cmd == 'run_server':
                     run_server()
+                elif cmd == 'sunrise':
+                    sunrise()
                 else:
                     globals()['global_action'](cmd)
         elif cmd in ['bright', 'brightness']:
@@ -211,11 +213,7 @@ class Server(object):
         self.monitor_switches_proc.start()
         self.http_proc.start()
         systemStartTime = datetime.datetime.utcnow()
-        logger.info('before')
-        try:
-            global_action('autoset')
-        except:
-            logger.exception('test')
+        global_action('autoset')
         while True:
             try:
                 self.timer_wake = True
@@ -240,7 +238,6 @@ class Server(object):
                     getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
                 elif self.http_res is not None:
                     logger.info('http')
-                    logger.info(self.http_res['eventType'])
                     if self.http_res['eventType'] == 'manual':
                         global_writeState(self.http_res["action"])
                         continue
@@ -293,7 +290,7 @@ def global_action(action, *args, **kwargs):
                 getattr(room, action)(*args, **kwargs)
                 break
             except Exception as e:
-                logger.warn('Failed to execute %s on try %d for %s', action, attempt, room.name)
+                logger.warn('Failed to execute %s on try %d for %s\n%s', action, attempt+1, room.name, ' '.join(e.args))
         else:
             raise(e)
         
