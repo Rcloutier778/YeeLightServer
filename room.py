@@ -189,8 +189,8 @@ class Room:
         if not auto:
             self.on()
         self.colorTempFlow(temperature, duration, brightness)
-    
-    
+ 
+    @retry
     def off(self, auto=False):
         if auto:
             # Check if system tray has been used recently to override autoset
@@ -208,7 +208,7 @@ class Room:
             if all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
                 break
     
-    
+    @retry
     def on(self):
         self.writeState('on')
         while True:
@@ -229,7 +229,7 @@ class Room:
             self.on()
         else:
             self.off()
-    
+    @retry
     def rgb(self, red, green, blue):
         red = int(red)
         green = int(green)
@@ -240,6 +240,7 @@ class Room:
                                        action=yeelight.Flow.actions.stay,
                                        transitions=[transition]))
     
+    @retry
     def colorTempFlow(self, temperature=3200, duration=3000, brightness=80):
         # control all lights at once
         # makes things look more condensed

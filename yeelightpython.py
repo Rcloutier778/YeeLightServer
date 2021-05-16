@@ -219,17 +219,22 @@ class Server(object):
                 self.timer_wake = True
                 self.switch_room, self.switch_action = None, None
                 self.http_res = None
+                self.ping_res = None
                 with self.wake_condition:
                     self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
                     if self.wake_predicate():
                         self.resolve_wake()
                 logger.info("Woke up")
-                if not self.ping_res:
-                    # Temp fix for PC not having a valid IP address on waking from sleep.
-                    sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p')
-                    if datetime.datetime.now().time() >= sunrise_time.time() and datetime.datetime.now().time() <= (sunrise_time + datetime.timedelta(hours=1)).time():
-                        continue
-                    global_action('off', True)
+                if self.ping_res is not None:
+                    if self.ping_res:
+                        global_action('on', True)
+                        global_action('autoset', force=True)
+                    else:
+                        # Temp fix for PC not having a valid IP address on waking from sleep.
+                        sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p')
+                        if datetime.datetime.now().time() >= sunrise_time.time() and datetime.datetime.now().time() <= (sunrise_time + datetime.timedelta(hours=1)).time():
+                            continue
+                        global_action('off', True)
                 elif self.switch_room:
                     if self.switch_room not in ROOMS:
                         logger.error('Received %s from switch_room, which is not in %s', self.switch_room, ', '.join(ROOMS))
@@ -292,7 +297,7 @@ def global_action(action, *args, **kwargs):
             except Exception as e:
                 logger.warn('Failed to execute %s on try %d for %s\n%s', action, attempt+1, room.name, ' '.join(e.args))
         else:
-            raise(e)
+            raise
         
         
 def sunrise():
@@ -301,7 +306,7 @@ def sunrise():
     :return:
     """
     # Prevent autoset from taking over
-    writeManualOverride()
+    writeManualOverride(datetime.timedelta(hours=2))
     
     # Write the new state
     global_writeState('day')

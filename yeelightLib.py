@@ -1,7 +1,9 @@
 import datetime
+from functools import wraps
 import logging
 import os
 import pickle
+import time
 from logging.handlers import RotatingFileHandler
 
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
@@ -104,9 +106,11 @@ def getNightRange():
         nightTimeRange = pickle.load(f)
     return nightTimeRange
 
-def writeManualOverride():
+def writeManualOverride(offset=None):
+    offset = offset if isinstance(offset, datetime.timedelta) else datetime.timedelta(hours=0)
+    t=datetime.datetime.utcnow() + offset
     with open(MANUAL_OVERRIDE_PATH, 'w+') as f:
-        f.write(datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S'))
+        f.write(t.strftime('%Y-%m-%d %H:%M:%S'))
 
 def readManualOverride():
     if os.path.exists(MANUAL_OVERRIDE_PATH):
@@ -186,6 +190,25 @@ def set_IRL_sunset():
 #    def __init__(self, *args, **kwargs):
 #        super(yeelight.Bulb, self).__init__(*args, **kwargs)
 
-    
+def retry(orig_func=None, max_attempts=3):
+    def _decorate(func):
+        @wraps(func)
+        def retry_wrapper(*args, **kwargs):
+            logger = getLogger()
+            for attemptNum in range(max_attempts):
+                try:
+                    res = func(*args, **kwargs)
+                    break
+                except Exception as e:
+                    logger.warn('Failed to execute %s on try %d\n%s', func.__name__, attemptNum+1, ' '.join(e.args))
+                    time.sleep(1)
+            else:
+                raise(e)
+            return res
+        return retry_wrapper
+    if orig_func:
+        return _decorate(orig_func)
+
+    return _decorate
 
 
