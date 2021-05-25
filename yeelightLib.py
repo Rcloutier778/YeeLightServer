@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
 BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15"]
-room_to_ips = {'Bedroom': ["10.0.0.5", "10.0.0.10", "10.0.0.15"]}
+room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.15"], 'Bedroom':["10.0.0.10"] }
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 
@@ -71,7 +71,7 @@ def getLogger():
     
     logger = logging.getLogger('log')
     logger.setLevel(logging.INFO)
-    fh = RotatingFileHandler(logpath, maxBytes=1024)
+    fh = RotatingFileHandler(logpath, maxBytes=1024*1024*5, mode='a', backupCount=2, delay=0)
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
@@ -86,7 +86,7 @@ def getBulbLogger():
         return actualLoggers.get('bulbLog')
     bulbLog = logging.getLogger('bulbLog')
     bulbLog.setLevel(logging.DEBUG)
-    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024)
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024, delay=0, mode='a')
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     bulbLog.addHandler(fh)

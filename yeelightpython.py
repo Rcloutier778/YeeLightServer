@@ -289,15 +289,17 @@ def global_action(action, *args, **kwargs):
     if action not in bulbCommands:
         logger.error('%s is not a valid global action!', action)
         return
+    ex = None
     for room in ROOMS.values():
         for attempt in range(3):
             try:
                 getattr(room, action)(*args, **kwargs)
                 break
             except Exception as e:
+                ex = e
                 logger.warn('Failed to execute %s on try %d for %s\n%s', action, attempt+1, room.name, ' '.join(e.args))
         else:
-            raise
+            raise ex
         
         
 def sunrise():

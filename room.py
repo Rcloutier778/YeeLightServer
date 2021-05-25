@@ -155,39 +155,39 @@ class Room:
     
     
     def day(self, duration=3000, auto=False):
-        self.writeState('day')
         if not auto:
             self.on()
+        self.writeState('day')
         # 3200
         self.colorTempFlow(DAY_COLOR, duration, DAY_BRIGHTNESS)
     
     
     def dusk(self, duration=3000, auto=False):
-        self.writeState('dusk')
         if not auto:
             self.on()
+        self.writeState('dusk')
         # 3000
         self.colorTempFlow(DUSK_COLOR, duration, DUSK_BRIGHTNESS)
     
     
     def night(self, duration=3000, auto=False):
-        self.writeState('night')
         if not auto:
             self.on()
+        self.writeState('night')
         self.colorTempFlow(NIGHT_COLOR, duration, NIGHT_BRIGHTNESS)
     
     
     def sleep(self, duration=3000, auto=False):
-        self.writeState('sleep')
         if not auto:
             self.on()
+        self.writeState('sleep')
         self.colorTempFlow(SLEEP_COLOR, duration, SLEEP_BRIGHTNESS)
     
     
     def customTempFlow(self, temperature, duration=3000, auto=False, brightness=80):
-        self.writeState('custom:%d:%d' % (temperature, brightness,))
         if not auto:
             self.on()
+        self.writeState('custom:%d:%d' % (temperature, brightness,))
         self.colorTempFlow(temperature, duration, brightness)
  
     @retry
@@ -252,7 +252,7 @@ class Room:
     
     
     def autoset(self, autosetDuration=AUTOSET_DURATION, autoset_auto_var=False, force=False):
-        if not False and all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
+        if not force and all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
             logger.info('Power is off, cancelling autoset')
             return -1
         
@@ -286,12 +286,12 @@ class Room:
                 r[rr] = datetime.time(t.hour, t.minute, 0)
         if dayrange[0] <= now < dayrange[1]:
             logger.info("Autoset: Day")
-            self.day(autosetDuration, True)
+            self.day(autosetDuration, not force)
         elif nightrange[0] <= now and now < nightrange[1]:
             for (startTime, endTime, temperature, brightness) in autosetNightRange:
                 if startTime <= now and now < endTime:
                     logger.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
-                    self.customTempFlow(temperature, duration=autosetDuration, auto=True, brightness=brightness)
+                    self.customTempFlow(temperature, duration=autosetDuration, auto=not force, brightness=brightness)
                     return 0
             else:
                 logger.warning("Didn't find applicable range!!!")
