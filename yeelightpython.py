@@ -239,7 +239,7 @@ class Server(object):
                     if self.switch_room not in ROOMS:
                         logger.error('Received %s from switch_room, which is not in %s', self.switch_room, ', '.join(ROOMS))
                         continue
-                    kwargs = {'force':True} if self.switch_action == 'autoset' else {}
+                    kwargs = {'autosetDuration': 3000, 'force':True} if self.switch_action == 'autoset' else {}
                     getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
                 elif self.http_res is not None:
                     logger.info('http')
@@ -252,6 +252,7 @@ class Server(object):
                             continue
                         if self.http_res['action'] == 'autoset':
                             self.http_res['kwargs']['force'] = True
+                            self.http_res['kwargs']['autosetDuration'] = 3000
                         if self.http_res['room'] == 'global':
                             logger.info('global http')
                             global_action(self.http_res['action'], **self.http_res['kwargs'])
