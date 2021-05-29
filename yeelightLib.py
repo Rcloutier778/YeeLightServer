@@ -9,7 +9,7 @@ from logging.handlers import RotatingFileHandler
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
 BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15"]
-room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.15"], 'Bedroom':["10.0.0.10"] }
+room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.10" ], 'Bedroom':["10.0.0.15"] }
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 
@@ -50,7 +50,7 @@ REST_SERVER_PORT_NUMBER = 9001
 pcStatus = True
 phoneStatus = True
 
-formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
+formatter = logging.Formatter('%(asctime)s [pid %(process)d] %(levelname)s %(message)s')
 
 actualLoggers = {}
 
@@ -61,12 +61,13 @@ except ImportError:
     def setprocname(name):
         return
 
-def getLogger():
+def getLogger(quiet=False):
     global actualLoggers
     logpath = os.path.join(HOMEDIR, 'log.log')
     if actualLoggers.get('log'):
         logger = actualLoggers.get('log')
-        logger.info('Logging to %s', logpath)
+        if not quiet:
+            logger.info('Logging to %s', logpath)
         return logger
     
     logger = logging.getLogger('log')
@@ -94,8 +95,10 @@ def getBulbLogger():
     return bulbLog
 
 def getCalcTimes():
+    #NOTE:
+    # If you're going to use this, make sure to add 'from yeelightLib import SUNSET_TIME'
+    #   The from * import won't work!!!
     global SUNSET_TIME
-    global SLEEP_TIME
     with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
         calcTimes = pickle.load(f)
         SUNSET_TIME = calcTimes['sunsetTime']
@@ -173,10 +176,10 @@ def set_IRL_sunset():
         endTime = startTime + datetime.timedelta(minutes=1 + (timeDiff // iters))
         temperature = DUSK_COLOR - int(tempDiff * i // iters)
         # logger.info([iters,i,brightnessDecreaseIterNum, iters - i , iters-brightnessDecreaseIterNum])
-        if startTime >= origDict['nautical_twilight_end']:  # temperature < brightnessChangePoint:
+        if startTime >= origDict['civil_twilight_end']:  # temperature < brightnessChangePoint:
             if not brightnessDecreaseIterNum:
                 brightnessDecreaseIterNum = i
-            brightness = int(80 * ((iters - i) / (iters - brightnessDecreaseIterNum)))
+            brightness = max(20, int(80 * ((iters - i) / (iters - brightnessDecreaseIterNum))))
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
     for startTime, endTime, temp, brightness in returnRange:
         logger.info(
@@ -194,13 +197,15 @@ def retry(orig_func=None, max_attempts=3):
     def _decorate(func):
         @wraps(func)
         def retry_wrapper(*args, **kwargs):
-            logger = getLogger()
+            logger = getLogger(quiet=True)
+            e = None
             for attemptNum in range(max_attempts):
                 try:
                     res = func(*args, **kwargs)
                     break
-                except Exception as e:
-                    logger.warn('Failed to execute %s on try %d\n%s', func.__name__, attemptNum+1, ' '.join(e.args))
+                except Exception as exc:
+                    e = exc
+                    logger.warn('Failed to execute %s on try %d\n%s', func.__name__, attemptNum+1, ' '.join(exc.args))
                     time.sleep(1)
             else:
                 raise(e)

@@ -10,13 +10,17 @@ from influxdb import InfluxDBClient
 
 os.chdir(HOMEDIR)
 
-logger = getLogger()
+logger = None
 
-bulbLog = getBulbLogger()
+bulbLog = None
 
 
 class Room:
     def __init__(self, name, bulbs):
+        global logger, bulbLog
+
+        logger = getLogger()
+        bulbLog = getBulbLogger()
         self.bulbs = bulbs
         assert name in room_to_ips
         self.name = name
@@ -263,7 +267,12 @@ class Room:
             if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
                 logger.info("Autoset: SystemTray used recently, canceling autoset")
                 return -1
+
+        from yeelightLib import SUNSET_TIME
         getCalcTimes()
+        logger.critical(SUNSET_TIME)
+
+        #TODO changes to globals in yeelightLib won't carry over to here. 
         
         # set light level when computer is woken up, based on time of day
         rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
@@ -274,10 +283,11 @@ class Room:
         if time.localtime().tm_wday in [5, 6]:  # weekend
             dayrange[0] = WEEKEND_SUNRISE_TIME
         
+        autosetNightRange = getNightRange()
+
         nightrange = [dayrange[1], SLEEP_TIME]
         DNDrange = [nightrange[1], dayrange[0]]
         
-        autosetNightRange = getNightRange()
         
         timeranges = [dayrange, nightrange, DNDrange]
         for r in timeranges:
@@ -294,13 +304,14 @@ class Room:
                     self.customTempFlow(temperature, duration=autosetDuration, auto=not force, brightness=brightness)
                     return 0
             else:
-                logger.warning("Didn't find applicable range!!!")
-                logger.warning(dayrange)
-                logger.warning(nightrange)
-                logger.warning(DNDrange)
-                logger.warning(now)
-                logger.warning(SUNSET_TIME)
-                logger.warning(SLEEP_TIME)
+                warnstr = ["Didn't find applicable range!!!"]
+                warnstr.append(dayrange)
+                warnstr.append(nightrange)
+                warnstr.append(DNDrange)
+                warnstr.append(now)
+                warnstr.append(SUNSET_TIME)
+                warnstr.append(SLEEP_TIME)
+                logger.warning('\n'.join(str(x) for x in warnstr))
         elif DNDrange[0] <= now or now < DNDrange[1]:
             logger.info("Autoset: dnd")
             self.off()
