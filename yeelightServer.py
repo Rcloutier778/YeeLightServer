@@ -16,7 +16,7 @@ import os
 import os.path
 import base64
 import platform
-from yeelightpython import global_writeState
+from yeelightpython import global_action
 
 from yeelightLib import *
 
@@ -74,7 +74,7 @@ class MyHandler(BaseHTTPRequestHandler):
         try:
             if data["eventType"] == 'manual':
                 writeManualOverride()
-                global_writeState(data["newState"])
+                global_action('writeState', data["newState"])
 
         except Exception as e:
             logger.error(e)
@@ -168,6 +168,7 @@ def GET_panel():
 
 
 def createPlot():
+    from yeelightLib import SUNSET_TIME
     calcTimes = getCalcTimes()
     nightTimeRange = getNightRange()
     

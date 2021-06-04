@@ -24,8 +24,15 @@ class Room:
         self.bulbs = bulbs
         assert name in room_to_ips
         self.name = name
-        
-        self.roomStatePath = os.path.join(ROOM_STATES_DIR, self.name)
+
+        if not os.path.exists(ROOM_STATES_DIR):
+            os.mkdir(ROOM_STATES_DIR)
+        self.room_dir = ROOM_DIR.format(room=self.name)
+        if not os.path.exists(self.room_dir):
+            os.mkdir(self.room_dir)
+
+        self.roomStatePath = os.path.join(self.room_dir, 'state')
+        self.manualOverridePath = MANUAL_OVERRIDE_PATH.format(room=self.name)
         self.state = None
 
         self.influx_client = InfluxDBClient(database='yeelight',
@@ -34,9 +41,10 @@ class Room:
                                    username='admin',
                                    password = open('/home/richard/aqm/sensor/influx.secret','r').read().strip()
                                    ) if 'Windows' not in platform.platform() else None
+        self.rebuild_bulbs()
 
     def rebuild_bulbs(self):
-        found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
+        found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1) if bulb['ip'] in room_to_ips[self.name] )
         current_bulb_ips = sorted(bulb._ip for bulb in self.bulbs)
         if current_bulb_ips != found_bulb_ips:
             logger.info('Different bulbs!')
@@ -47,8 +55,8 @@ class Room:
         global pcStatus, phoneStatus
         bulbLog.info('%s = %s', self.name, newState)
         self.state = newState
-        if not os.path.exists(ROOM_STATES_DIR):
-            os.mkdir(ROOM_STATES_DIR)
+        if not os.path.exists(self.room_dir):
+            os.mkdir(self.room_dir)
         
         prev_state_dict = {'state': None, 'pcStatus': None, 'phoneStatus': None}
         if os.path.exists(self.roomStatePath):
@@ -104,13 +112,12 @@ class Room:
         "Get the last written state of the bulbs in a room"
         validStates = ['day', 'dusk', 'night', 'off', 'sleep', 'on', 'color']
         
-        if not os.path.exists(ROOM_STATES_DIR):
-            os.mkdir(ROOM_STATES_DIR)
-        roomStatePath = os.path.join(ROOM_STATES_DIR, self.name)
-        if not os.path.exists(roomStatePath):
+        if not os.path.exists(self.room_dir):
+            os.mkdir(self.room_dir)
+        if not os.path.exists(self.roomStatePath):
             self.writeState('day')
         
-        with open(roomStatePath) as f:
+        with open(self.roomStatePath) as f:
             jdict = json.load(f)
             if jdict['state'] not in validStates and 'custom:' not in jdict['state']:
                 jdict['state'] = 'off'
@@ -198,7 +205,7 @@ class Room:
     def off(self, auto=False):
         if auto:
             # Check if system tray has been used recently to override autoset
-            ld = readManualOverride()
+            ld = readManualOverride(self.name)
             if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
                 bulbLog.info("SystemTray used recently, canceling autoset")
                 return -1
@@ -263,16 +270,14 @@ class Room:
         # If what called autoset is not a checkping event
         if not force and not autoset_auto_var:
             # Check if system tray has been used recently to override autoset
-            ld = readManualOverride()
+            ld = readManualOverride(self.name)
             if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
                 logger.info("Autoset: SystemTray used recently, canceling autoset")
                 return -1
 
         from yeelightLib import SUNSET_TIME
         getCalcTimes()
-        logger.critical(SUNSET_TIME)
 
-        #TODO changes to globals in yeelightLib won't carry over to here. 
         
         # set light level when computer is woken up, based on time of day
         rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()

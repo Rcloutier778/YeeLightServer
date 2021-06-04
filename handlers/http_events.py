@@ -98,12 +98,14 @@ def YeelightHTTP(event, cond, pipe):
                 if data['eventType'] == 'dashboard':
                     data['eventType'] += '-action'
                 assert data['newState'] in bulbCommands + ['color']
-                writeManualOverride()
 
                 # Probably will need to pass in funky stuff for autoset and such
                 room = data.get('room')
                 room = room or 'global'
                 assert room in list(room_to_ips) + ['global']
+
+                writeManualOverride(room if room != 'global' else None)
+
                 pipe_data = {'room':room,
                     'action': data['newState'],
                     'eventType': data['eventType']
@@ -136,6 +138,7 @@ def YeelightHTTP(event, cond, pipe):
 def http_server(event, cond, pipe):
     global logger
     logger = getLogger()
+    setprocname('http_server')
     HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.17'
     httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
     

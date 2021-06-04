@@ -36,6 +36,12 @@ bulbs = []
 
 ROOMS = {roomName : Room(roomName, [yeelight.Bulb(ip) for ip in ips]) for roomName, ips in room_to_ips.items()}
 
+
+# Should the server execute the command or should the client?
+SERVER_ACTS_NOT_CLIENT = False
+
+
+
 def main():
     # logger.info(desk.get_properties())
     global bulbs
@@ -56,7 +62,6 @@ def main():
         return
     else:
         cmd = sys.argv[1].lower()
-        
         if cmd in allcommands:
             if cmd in commands:
                 if 'autoset' not in cmd:
@@ -64,13 +69,12 @@ def main():
                 bulbs = []
                 assert all(bulb_ips in set( y for x in room_to_ips.values() for y in x) for bulb_ips in BULB_IPS)
                 for roomName, ips in room_to_ips.items():
-                    
                     blbs = []
                     for ip in ips:
                         bulb = yeelight.Bulb(ip)
                         bulbs.append(bulb)
                         blbs.append(bulb)
-                    ROOMS[roomName] = Room(roomName, blbs)
+                    ROOMS[roomName] = Room(roomName, [])
                 if cmd == 'run_server':
                     run_server()
                 elif cmd == 'sunrise':
@@ -213,7 +217,7 @@ class Server(object):
         self.monitor_switches_proc.start()
         self.http_proc.start()
         systemStartTime = datetime.datetime.utcnow()
-        global_action('autoset')
+        global_action('autoset', force=True)
         while True:
             try:
                 self.timer_wake = True
@@ -227,26 +231,30 @@ class Server(object):
                 logger.info("Woke up")
                 if self.ping_res is not None:
                     if self.ping_res:
-                        global_action('on', True)
+                        global_action('on')
                         global_action('autoset', force=True)
                     else:
                         # Temp fix for PC not having a valid IP address on waking from sleep.
                         sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p')
                         if datetime.datetime.now().time() >= sunrise_time.time() and datetime.datetime.now().time() <= (sunrise_time + datetime.timedelta(hours=1)).time():
                             continue
-                        global_action('off', True)
+                        global_action('off')
                 elif self.switch_room:
                     if self.switch_room not in ROOMS:
                         logger.error('Received %s from switch_room, which is not in %s', self.switch_room, ', '.join(ROOMS))
                         continue
+                    writeManualOverride(self.switch_room, datetime.timedelta(hours=2))
+                    logger.info('Switch in %s hit for %s', self.switch_room, self.switch_action)
                     kwargs = {'autosetDuration': 3000, 'force':True} if self.switch_action == 'autoset' else {}
                     getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
                 elif self.http_res is not None:
                     logger.info('http')
                     if self.http_res['eventType'] == 'manual':
-                        global_writeState(self.http_res["action"])
-                        continue
-                    elif self.http_res['eventType'] == 'dashboard-action':
+                        global_action('writeState',self.http_res["action"])
+                        if not SERVER_ACTS_NOT_CLIENT:
+                            logger.info('Manual http event, no further action taken')
+                            continue
+                    if self.http_res['eventType'] == 'dashboard-action' or (SERVER_ACTS_NOT_CLIENT and self.http_res['eventType'] == 'manual'):
                         if self.http_res['action'] not in bulbCommands:
                             logger.error('Received %s as a command, which is not a valid command!' % self.http_res['action'])
                             continue
@@ -282,12 +290,8 @@ def run_server():
     server = Server()
     server.run()
 
-def global_writeState(newState):
-    for room in ROOMS.values():
-        room.writeState(newState)
-        
 def global_action(action, *args, **kwargs):
-    if action not in bulbCommands:
+    if action not in bulbCommands + ['writeState']:
         logger.error('%s is not a valid global action!', action)
         return
     ex = None
@@ -298,7 +302,7 @@ def global_action(action, *args, **kwargs):
                 break
             except Exception as e:
                 ex = e
-                logger.warn('Failed to execute %s on try %d for %s\n%s', action, attempt+1, room.name, ' '.join(e.args))
+                logger.warn('Failed to execute %s on try %d for %s\n%s\nargs:%s\nkwargs:%s', action, attempt+1, room.name, ' '.join(e.args), ', '.join(str(x) for x in args), kwargs)
         else:
             raise ex
         
@@ -309,10 +313,10 @@ def sunrise():
     :return:
     """
     # Prevent autoset from taking over
-    writeManualOverride(datetime.timedelta(hours=2))
+    writeManualOverride(offset=datetime.timedelta(hours=2))
     
     # Write the new state
-    global_writeState('day')
+    global_action('writeState','day')
     
     bulbLog.info('Sunrise start')
     overallDuration = 1200000  # 1200000 == 20 min

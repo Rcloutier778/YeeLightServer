@@ -8,12 +8,14 @@ from logging.handlers import RotatingFileHandler
 
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
+ROOM_DIR = os.path.join(ROOM_STATES_DIR, '{room}')
+
 BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15"]
 room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.10" ], 'Bedroom':["10.0.0.15"] }
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 
-MANUAL_OVERRIDE_PATH = os.path.join(HOMEDIR, 'manualOverride.txt')
+MANUAL_OVERRIDE_PATH = os.path.join(ROOM_DIR, 'manualOverride.txt')
 
 bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb']
 
@@ -96,7 +98,7 @@ def getBulbLogger():
 
 def getCalcTimes():
     #NOTE:
-    # If you're going to use this, make sure to add 'from yeelightLib import SUNSET_TIME'
+    # If you're going to use this, make sure to add 'from yeelightLib import SUNSET_TIME' right above it
     #   The from * import won't work!!!
     global SUNSET_TIME
     with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
@@ -109,19 +111,23 @@ def getNightRange():
         nightTimeRange = pickle.load(f)
     return nightTimeRange
 
-def writeManualOverride(offset=None):
+def writeManualOverride(room=None, offset=None):
     offset = offset if isinstance(offset, datetime.timedelta) else datetime.timedelta(hours=0)
     t=datetime.datetime.utcnow() + offset
-    with open(MANUAL_OVERRIDE_PATH, 'w+') as f:
-        f.write(t.strftime('%Y-%m-%d %H:%M:%S'))
+    assert room is None or room in room_to_ips
+    rooms = [room] if room is not None else list(room_to_ips.keys())
+    for rm in rooms:
+        with open(MANUAL_OVERRIDE_PATH.format(room=rm), 'w+') as f:
+            f.write(t.strftime('%Y-%m-%d %H:%M:%S'))
 
-def readManualOverride():
-    if os.path.exists(MANUAL_OVERRIDE_PATH):
-        with open(MANUAL_OVERRIDE_PATH, 'r') as f:
+def readManualOverride(room=None):
+    room = room or list(room_to_ips.keys())[0]
+    if os.path.exists(MANUAL_OVERRIDE_PATH.format(room=room)):
+        with open(MANUAL_OVERRIDE_PATH.format(room=room), 'r') as f:
             return datetime.datetime.strptime(f.read().strip(), '%Y-%m-%d %H:%M:%S')
     else:
         fake_date = datetime.datetime.utcnow() - datetime.timedelta(days=1)
-        with open(MANUAL_OVERRIDE_PATH, 'w+') as f:
+        with open(MANUAL_OVERRIDE_PATH.format(room=room), 'w+') as f:
             f.write(fake_date.strftime('%Y-%m-%d %H:%M:%S'))
         return fake_date
 
@@ -181,6 +187,7 @@ def set_IRL_sunset():
                 brightnessDecreaseIterNum = i
             brightness = max(20, int(80 * ((iters - i) / (iters - brightnessDecreaseIterNum))))
         returnRange.append([startTime.time(), endTime.time(), temperature, brightness])
+    returnRange.append([returnRange[-1][0], datetime.datetime.strptime("10:30:PM","%I:%M:%p").time(), SLEEP_COLOR, SLEEP_BRIGHTNESS])
     for startTime, endTime, temp, brightness in returnRange:
         logger.info(
             '%s, %s, %d, %d' % (startTime.strftime('%I:%M:%S %p'), endTime.strftime('%I:%M:%S %p'), temp, brightness))
