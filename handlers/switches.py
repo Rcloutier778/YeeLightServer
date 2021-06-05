@@ -28,38 +28,37 @@ def monitor_switches(event, cond, pipe):
     '''
     setprocname('Switches')
     logger.info('Monitoring switches')
-    p,c = mp.Pipe()
-    
+
     def start_rtl_433():
         return subprocess.Popen(['rtl_433','-R','0', '-X', 'n=switch,m=OOK_PWM,s=464,l=1404,r=12600,g=1800,bits=25,unique', '-F','json'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, universal_newlines=True, bufsize=1)
-    
+
     proc = start_rtl_433()
 
     def cleanup(*args, **kwargs):
+        logger.info('Cleaning up switches')
         proc.kill()
-        p.close()
-        c.close()
         sys.exit(0)
     lastTime = datetime.datetime.now()
     signal.signal(signal.SIGTERM, cleanup)
     atexit.register(cleanup)
 
     ldata = None
-    
+
     def restart_proc():
         logger.info('Restarting rtl_433 subprocess')
         rc = proc.poll()
         logger.info('rtl_433 has a return code of %s', str(rc))
         proc.kill()
         return start_rtl_433()
-        
+
+    logger.info('Entering switch loop')
+
     while True:
         try:
             res = proc.stdout.readline()
-            proc.stdout.readlines()
             try:
                 res = json.loads(res)
-            except json.decoder.JSONDecodeError:
+            except Exception: #json.decoder.JSONDecodeError:
                 logger.exception('Exception when loading json in monitor switches')
                 proc = restart_proc()
                 continue
@@ -87,7 +86,7 @@ def monitor_switches(event, cond, pipe):
                     pipe.send(['', None])
                 # Clear the ack response
                 pipe.recv()
-                
+
             except Exception:
                 logger.exception('Exception when evaluating rtl_433 output in monitor switches')
 
