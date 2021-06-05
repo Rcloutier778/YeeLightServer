@@ -28,9 +28,9 @@ def monitor_switches(event, cond, pipe):
     '''
     setprocname('Switches')
     logger.info('Monitoring switches')
-
     def start_rtl_433():
-        return subprocess.Popen(['rtl_433','-R','0', '-X', 'n=switch,m=OOK_PWM,s=464,l=1404,r=12600,g=1800,bits=25,unique', '-F','json'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, universal_newlines=True, bufsize=1)
+        # r=12600
+        return subprocess.Popen(['rtl_433','-R','0', '-X', 'n=switch,m=OOK_PWM,s=464,l=1404,r=1800,g=1800,bits=25,unique', '-F','json' '-M' 'time:utc'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, universal_newlines=True, bufsize=1)
 
     proc = start_rtl_433()
 
@@ -38,7 +38,7 @@ def monitor_switches(event, cond, pipe):
         logger.info('Cleaning up switches')
         proc.kill()
         sys.exit(0)
-    lastTime = datetime.datetime.now()
+    lastTime = datetime.datetime.utcnow()
     signal.signal(signal.SIGTERM, cleanup)
     atexit.register(cleanup)
 
