@@ -30,7 +30,7 @@ def monitor_switches(event, cond, pipe):
     logger.info('Monitoring switches')
     def start_rtl_433():
         # r=12600
-        return subprocess.Popen(['rtl_433','-R','0', '-X', 'n=switch,m=OOK_PWM,s=464,l=1404,r=1800,g=1800,bits=25,unique', '-F','json' '-M' 'time:utc'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, universal_newlines=True, bufsize=1)
+        return subprocess.Popen(['rtl_433','-R','0', '-X', 'n=switch,m=OOK_PWM,s=464,l=1404,r=1800,g=1800,bits=25,unique', '-F','json', '-M', 'time:utc'], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, universal_newlines=True, bufsize=1)
 
     proc = start_rtl_433()
 
