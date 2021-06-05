@@ -22,7 +22,7 @@ CODES = {
         '50d57f8': ['LivingRoom','sleep'],
         }
 
-def monitor_switches(event, cond, pipe : mp.connection.Connection):
+def monitor_switches(event, cond, pipe):
     '''
     Monitors 433MHz radio for switch event
     '''
