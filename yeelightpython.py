@@ -200,6 +200,10 @@ class Server(object):
             logger.info("Resolving switch event")
             self.switch_room, self.switch_action = self.switch_pipe.recv()
             self.switch_event.clear()
+            self.switch_pipe.send(0)
+            # switch proc did not get the ack from us and has sent a still_alive request
+            if self.switch_room == '' and self.switch_action is None:
+                self.switch_room = None
         if self.http_event.is_set():
             logger.info("Resolving http event")
             self.http_res = self.http_pipe.recv()
