@@ -322,3 +322,33 @@ class Room:
             self.off()
         return 0
 
+    def sunrise(self):
+        """
+        Simulate a sunrise
+        """
+        writeManualOverride(room=self.name, offset=datetime.timedelta(hours=2))
+        self.writeState('day')
+        bulbLog.info('Sunrise start')
+        overallDuration = 1200000  # 1200000 == 20 min
+        self.on()
+        try:
+            for i in self.bulbs:
+                i.set_brightness(0)
+                i.set_rgb(255, 0, 0)
+            logger.info("Set initial state for sunrise")
+            time.sleep(1)
+            transitions = [
+                yeelight.HSVTransition(hue=39, saturation=100,
+                    duration=overallDuration * 0.5, brightness=80),
+                yeelight.TemperatureTransition(degrees=3200,
+                    duration=overallDuration * 0.5, brightness=80)
+            ]
+            for i in self.bulbs:
+                i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
+            logger.info('Sunrise Flowing')
+
+        except Exception:
+            logger.exception('Got exception during sunrise')
+
+
+

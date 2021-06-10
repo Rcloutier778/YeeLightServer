@@ -79,6 +79,8 @@ def main():
                     run_server()
                 elif cmd == 'sunrise':
                     sunrise()
+                elif cmd == 'sunrise_http':
+                    sunrise_http()
                 else:
                     globals()['global_action'](cmd)
         elif cmd in ['bright', 'brightness']:
@@ -319,27 +321,36 @@ def sunrise():
     # Prevent autoset from taking over
     writeManualOverride(offset=datetime.timedelta(hours=2))
     
-    # Write the new state
+    # Write the new state, prevent timing collisions
     global_action('writeState','day')
     
     bulbLog.info('Sunrise start')
     overallDuration = 1200000  # 1200000 == 20 min
     global_action('on')
-    
-    for i in bulbs:
-        i.set_brightness(0)
-        i.set_rgb(255, 0, 0)
-    time.sleep(1)
-    
-    transitions = [yeelight.HSVTransition(hue=39, saturation=100,
-                                          duration=overallDuration * 0.5, brightness=80),
-                   yeelight.TemperatureTransition(degrees=3200,
-                                                  duration=overallDuration * 0.5, brightness=80)]
-    
-    for i in bulbs:
-        i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
-        
-        
+    try:
+        for i in bulbs:
+            i.set_brightness(0)
+            i.set_rgb(255, 0, 0)
+
+        time.sleep(1)
+
+        transitions = [yeelight.HSVTransition(hue=39, saturation=100,
+                                              duration=overallDuration * 0.5, brightness=80),
+                       yeelight.TemperatureTransition(degrees=3200,
+                                                      duration=overallDuration * 0.5, brightness=80)]
+
+        for i in bulbs:
+            i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
+
+    except Exception:
+        logger.exception('Got exception during sunrise')
+
+def sunrise_http():
+    """
+    http call for sunrise
+    """
+    import requests
+    requests.post('http://10.0.0.17:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'})
 
 
 if __name__ == "__main__":
