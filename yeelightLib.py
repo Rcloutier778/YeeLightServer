@@ -19,7 +19,7 @@ MANUAL_OVERRIDE_PATH = os.path.join(ROOM_DIR, 'manualOverride.txt')
 
 bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb']
 
-commands = bulbCommands + ['run_server']
+commands = bulbCommands + ['run_server', 'sunrise_http']
 allcommands = commands + ['bright', 'brightness']
 
 DAY_COLOR = 4000

@@ -38,8 +38,7 @@ ROOMS = {roomName : Room(roomName, [yeelight.Bulb(ip) for ip in ips]) for roomNa
 
 
 # Should the server execute the command or should the client?
-SERVER_ACTS_NOT_CLIENT = False
-
+SERVER_ACTS_NOT_CLIENT = True 
 
 
 def main():
