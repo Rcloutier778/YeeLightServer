@@ -8,3 +8,8 @@ vlad_manualOverride.txt
 serverLog.log
 bulbStateLog
 nightTimeRange.pickle
+__pycache__/*
+handlers/__pycache__/*
+bulbLog.log
+calcTimes.pickle
+temperaturePlot.png
