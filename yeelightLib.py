@@ -10,8 +10,8 @@ HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
 ROOM_DIR = os.path.join(ROOM_STATES_DIR, '{room}')
 
-BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15"]
-room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.10" ], 'Bedroom':["10.0.0.15"] }
+BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15", "10.0.0.20"]
+room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.10", "10.0.0.20" ], 'Bedroom':["10.0.0.15"] }
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 

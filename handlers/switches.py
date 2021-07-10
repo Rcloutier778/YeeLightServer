@@ -56,15 +56,18 @@ def monitor_switches(event, cond, pipe):
     while True:
         try:
             res = proc.stdout.readline()
+            if not res:
+                continue
             try:
                 res = json.loads(res)
             except Exception: #json.decoder.JSONDecodeError:
                 logger.exception('Exception when loading json in monitor switches')
+                logger.info(res)
                 proc = restart_proc()
                 continue
             try:
-                logger.info(res)
                 if res.get('model') != 'switch' or res.get('len') != 25 or res.get('data') is None:
+                    logger.info(res)
                     continue
                 assert res.get('data') in CODES, '%s is not a valid code' % res.get('data', 'None')
 
@@ -73,6 +76,8 @@ def monitor_switches(event, cond, pipe):
                 if dt - lastTime < datetime.timedelta(seconds=3) and ldata == res['data']:
                     logger.warn('Switch in %s hit %s too close to last previous hit, skipping', *CODES[res['data']])
                     continue
+                else:
+                    logger.info(res)
                 ldata = res['data']
                 lastTime = dt
                 room, action = CODES[res['data']]

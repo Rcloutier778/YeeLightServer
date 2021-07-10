@@ -44,11 +44,16 @@ class Room:
         self.rebuild_bulbs()
 
     def rebuild_bulbs(self):
-        found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1) if bulb['ip'] in room_to_ips[self.name] )
+        found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(3) if bulb['ip'] in room_to_ips[self.name] )
         current_bulb_ips = sorted(bulb._ip for bulb in self.bulbs)
         if current_bulb_ips != found_bulb_ips:
             logger.info('Different bulbs!')
+            logger.info('Found bulbs: %s', ', '.join(found_bulb_ips))
             self.bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulb_ips]
+            try:
+                self.resetFromLoggedState()
+            except Exception:
+                logger.exception('Got exception when restting bulbs in rebuild_bulbs')
 
     def writeState(self, newState):
         "Write out the state of the bulbs in the room"
