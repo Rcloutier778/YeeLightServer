@@ -38,23 +38,16 @@ ROOMS = {roomName : Room(roomName, [yeelight.Bulb(ip) for ip in ips]) for roomNa
 
 
 # Should the server execute the command or should the client?
-SERVER_ACTS_NOT_CLIENT = True 
+SERVER_ACTS_NOT_CLIENT = True
 
+# Does the room class handle the rebuild?
+YEELIGHT_ROOM_HANDLES_REBUILD = True
 
 def main():
     # logger.info(desk.get_properties())
     global bulbs
     global ROOMS
-    '''
-    import subprocess
-
-    response=subprocess.getstatusoutput('ping -n 2 10.0.0.7')
-    if 'time=' not in response[1]: #timeout, phone not present.
-        logger.info("Phone not present.")
-        logger.warning("Phone not present.")
-        off()
-        return
-    '''
+    
     if len(sys.argv) == 1:
         logger.info("No arguments.")
         logger.warning('No arguments.')
@@ -93,20 +86,24 @@ def main():
 
 def rebuild_bulbs():
     "Rebuild the bulb list."
-    global bulbs
-    found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
-    current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
-    if current_bulbs_ips != found_bulbs_ip:
-        new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
-        missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
-        for new_ip in new_ips:
-            logger.info('Found new bulb at ip addr: %s', new_ip)
-        for missing_ip in missing_ips:
-            logger.info('Missing bulb at ip addr: %s', missing_ip)
-            
-        bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
+    if YEELIGHT_ROOM_HANDLES_REBUILD:
         for room in ROOMS.values():
             room.rebuild_bulbs()
+    else:
+        global bulbs
+        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
+        current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
+        if current_bulbs_ips != found_bulbs_ip:
+            new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
+            missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+            for new_ip in new_ips:
+                logger.info('Found new bulb at ip addr: %s', new_ip)
+            for missing_ip in missing_ips:
+                logger.info('Missing bulb at ip addr: %s', missing_ip)
+                
+            bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
+            for room in ROOMS.values():
+                room.rebuild_bulbs()
 
 
 class Server(object):
@@ -327,9 +324,10 @@ def sunrise():
     overallDuration = 1200000  # 1200000 == 20 min
     global_action('on')
     try:
-        for i in bulbs:
-            i.set_brightness(0)
-            i.set_rgb(255, 0, 0)
+        blbs = [blb for room_blbs in ROOMS.values() for blb in room_blbs]
+        for bulb in blbs:
+            bulb.set_brightness(0)
+            bulb.set_rgb(255, 0, 0)
 
         time.sleep(1)
 
@@ -338,8 +336,8 @@ def sunrise():
                        yeelight.TemperatureTransition(degrees=3200,
                                                       duration=overallDuration * 0.5, brightness=80)]
 
-        for i in bulbs:
-            i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
+        for bulb in blbs:
+            bulb.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
 
     except Exception:
         logger.exception('Got exception during sunrise')

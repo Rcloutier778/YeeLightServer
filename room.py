@@ -14,6 +14,7 @@ logger = None
 
 bulbLog = None
 
+YEELIGHT_STATIC_REBUILD = True
 
 class Room:
     def __init__(self, name, bulbs):
@@ -42,6 +43,7 @@ class Room:
                                    password = open('/home/richard/aqm/sensor/influx.secret','r').read().strip()
                                    ) if 'Windows' not in platform.platform() else None
         self.rebuild_bulbs()
+        logger.info('Room %s has %s bulbs', self.name, ', '.join(sorted(b._ip for b in self.bulbs)))
 
     def rebuild_bulbs(self):
         found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(3) if bulb['ip'] in room_to_ips[self.name] )
@@ -49,7 +51,16 @@ class Room:
         if current_bulb_ips != found_bulb_ips:
             logger.info('Different bulbs!')
             logger.info('Found bulbs: %s', ', '.join(found_bulb_ips))
-            self.bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulb_ips]
+
+            # Clear out the bulbs, since they don't like having multiple 
+            #   connections to the same machine. 
+            del self.bulbs[:]
+
+            if YEELIGHT_STATIC_REBUILD:
+                logger.info('Statically rebuilding bulb list')
+                self.bulbs = [ yeelight.Bulb(ip) for ip in room_to_ips[self.name] ]
+            else:
+                self.bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulb_ips]
             try:
                 self.resetFromLoggedState()
             except Exception:
