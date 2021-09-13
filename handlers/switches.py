@@ -16,6 +16,7 @@ CODES = {
         'aeb82f8': ['Bedroom','day'],
         'aebaeb8': ['Bedroom','autoset'],
         'aeb7678': ['Bedroom','sleep'],
+        'aeb7e68': ['Bedroom','sleep'], # I'm too lazy to reprogram a remote just for one key. 
         '50d5458': ['LivingRoom','toggle'],
         '50d47f8': ['LivingRoom','day'],
         '50d55d8': ['LivingRoom','autoset'],
@@ -53,11 +54,19 @@ def monitor_switches(event, cond, pipe):
 
     logger.info('Entering switch loop')
 
+    noneResCount = 0
+
     while True:
         try:
             res = proc.stdout.readline()
             if not res:
+                noneResCount += 1
+                if noneResCount >= 10:
+                    logger.warn("Got None as rtl_433 output %d times!", noneResCount)
+                if noneResCount >= 100:
+                    restart_proc()
                 continue
+            noneResCount = 0
             try:
                 res = json.loads(res)
             except Exception: #json.decoder.JSONDecodeError:
