@@ -353,12 +353,22 @@ class Room:
                 i.set_rgb(255, 0, 0)
             logger.info("Set initial state for sunrise")
             time.sleep(1)
-            transitions = [
-                yeelight.HSVTransition(hue=39, saturation=100,
-                    duration=overallDuration * 0.5, brightness=80),
-                yeelight.TemperatureTransition(degrees=3200,
-                    duration=overallDuration * 0.5, brightness=80)
-            ]
+
+
+
+            transitions = [ yeelight.TemperatureTransition(degrees=1700, duration=overallDuration/4.5, brightness=10),
+                    yeelight.TemperatureTransition(degrees=2700, duration=overallDuration/3, brightness=50),
+                    yeelight.TemperatureTransition(degrees=DUSK_COLOR, duration=overallDuration/4.5, brightness=80),
+                    yeelight.TemperatureTransition(degrees=DAY_COLOR, duration=overallDuration/4.5, brightness=80)]
+
+
+            # Old manual RYC way
+            #transitions = [
+            #    yeelight.HSVTransition(hue=39, saturation=100,
+            #        duration=overallDuration * 0.5, brightness=80),
+            #    yeelight.TemperatureTransition(degrees=3200,
+            #        duration=overallDuration * 0.5, brightness=80)
+            #]
             for i in self.bulbs:
                 i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
             logger.info('Sunrise Flowing')
