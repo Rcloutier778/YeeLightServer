@@ -3,6 +3,7 @@ roomStates/*
 manualOverride.txt
 post.py
 log.log
+log.log.*
 richard_manualOverride.txt
 vlad_manualOverride.txt
 serverLog.log

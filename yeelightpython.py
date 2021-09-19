@@ -119,7 +119,7 @@ class Server(object):
     """
     
     def __init__(self):
-        setprocname('Lights server')
+        setprocname('Yeelight Lights server')
         set_IRL_sunset()
         for room in ROOMS.values():
             room.resetFromLoggedState()
@@ -347,7 +347,7 @@ def sunrise_http():
     http call for sunrise
     """
     import requests
-    requests.post('http://10.0.0.17:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'})
+    requests.post('http://10.0.0.17:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'}, timeout=60)
 
 
 if __name__ == "__main__":

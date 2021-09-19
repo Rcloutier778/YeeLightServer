@@ -47,7 +47,7 @@ AUTOSET_DURATION = 300000
 LEGACY_SERVER_PORT_NUMBER = 9000
 
 # REST API server port
-REST_SERVER_PORT_NUMBER = 9001
+REST_SERVER_PORT_NUMBER = 9001 #Update sunrise.sh too!
 
 pcStatus = True
 phoneStatus = True
