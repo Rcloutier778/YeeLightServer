@@ -140,8 +140,12 @@ def set_IRL_sunset():
     import pytz
     import datetime
     logger=getLogger()
-    r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0')
-    assert r.status_code == 200
+    try:
+        r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0', verify=False, allow_redirects=False )
+        assert r.status_code == 200
+    except Exception:
+        logger.exception("Got error when getting sunrise-sunset data!")
+        return
     origDict = json.loads(r.text)['results']
     for key in origDict:
         if not isinstance(origDict[key], str) or not re.match(

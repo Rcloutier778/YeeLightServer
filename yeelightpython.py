@@ -289,8 +289,16 @@ class Server(object):
 
 
 def run_server():
-    server = Server()
-    server.run()
+    try:
+        server = Server()
+    except Exception:
+        logger.exception("Exception when setting up server")
+        raise
+    try:
+        server.run()
+    except Exception:
+        logger.exception("Unrecoverable error encountered when running server!")
+        raise
 
 def global_action(action, *args, **kwargs):
     if action not in bulbCommands + ['writeState']:
