@@ -139,7 +139,7 @@ def http_server(event, cond, pipe):
     global logger
     logger = getLogger()
     setprocname('http_server')
-    HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.17'
+    HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.18'
     httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
     
     def cleanup(*args, **kwargs):

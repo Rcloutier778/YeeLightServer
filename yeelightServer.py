@@ -227,7 +227,7 @@ if __name__ == '__main__':
     if 'Windows' in platform.platform():
         HOST_NAME = '10.0.0.2'  #
     else:
-        HOST_NAME = '10.0.0.17'
+        HOST_NAME = '10.0.0.18'
     
     server_class = HTTPServer
     httpd = server_class((HOST_NAME, LEGACY_SERVER_PORT_NUMBER), MyHandler)

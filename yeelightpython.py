@@ -355,7 +355,7 @@ def sunrise_http():
     http call for sunrise
     """
     import requests
-    requests.post('http://10.0.0.17:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'}, timeout=60)
+    requests.post('http://10.0.0.18:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'}, timeout=60)
 
 
 if __name__ == "__main__":

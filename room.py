@@ -6,7 +6,8 @@ import time
 import yeelight
 
 
-from influxdb import InfluxDBClient
+from influxdb_client import InfluxDBClient
+from influxdb_client.client.write_api import SYNCHRONOUS
 
 os.chdir(HOMEDIR)
 
@@ -36,12 +37,13 @@ class Room:
         self.manualOverridePath = MANUAL_OVERRIDE_PATH.format(room=self.name)
         self.state = None
 
-        self.influx_client = InfluxDBClient(database='yeelight',
-                                   host='127.0.0.1',
-                                   port=8086,
-                                   username='admin',
-                                   password = open('/home/richard/aqm/sensor/influx.secret','r').read().strip()
+        self.influx_client = InfluxDBClient(url="https://10.0.0.18:8086",
+                                   verify_ssl=False,
+                                   #cert='/etc/ssl/influxdb/influxdb-selfsigned.crt',
+                                   token = open('/home/richard/influx.secret','r').read().strip()
                                    ) if 'Windows' not in platform.platform() else None
+        self.influx_writer = self.influx_client.write_api(write_options=SYNCHRONOUS)
+
         self.rebuild_bulbs()
         logger.info('Room %s has %s bulbs', self.name, ', '.join(sorted(b._ip for b in self.bulbs)))
 
@@ -112,7 +114,7 @@ class Room:
                 color, brightness = get_color_and_brightness(newState)
                 if color is None:
                     return
-                self.influx_client.write_points([{'measurement':'room_state',
+                self.influx_writer.write('yeelight', 'orgname', [{'measurement':'room_state',
                                              'fields':{
                                                  'room': self.name,
                                                  'state': newState.split(':', 1)[0],
