@@ -1,9 +1,12 @@
 from yeelightLib import *
 
+from functools import wraps
 import json
 import platform
 import time
+import inspect
 import yeelight
+
 
 
 from influxdb_client import InfluxDBClient
@@ -15,7 +18,33 @@ logger = None
 
 bulbLog = None
 
-YEELIGHT_STATIC_REBUILD = True
+# Rebuild from static list.
+#   NOTE: you probably want this off since the living room has the 3 overhead lights that 
+#       you normally keep off, remember?
+YEELIGHT_STATIC_REBUILD = False # True
+
+# When rebuilding dynamically, do we want to ensure that the known "safe" bulbs
+#   are always in the self.bulbs dict? Known "safe" are those that are not on a wall switch
+#   and should therefore always be live.
+YEELIGHT_USE_SAFE_BULBS = True
+
+def catchErr( orig_func=None ):
+    def _decorate(func):
+        @wraps(func)
+        def catchErr_wrapper(*args, **kwargs):
+            try:
+                res = func(*args, **kwargs)
+            except yeelight.main.BulbException as e:
+                if 'A socket error occurred when sending the command' in str(e):
+                    return
+                raise e
+
+            return res
+        return catchErr_wrapper
+    if orig_func:
+        return _decorate(orig_func)
+    return _decorate
+
 
 class Room:
     def __init__(self, name, bulbs):
@@ -47,6 +76,15 @@ class Room:
         self.rebuild_bulbs()
         logger.info('Room %s has %s bulbs', self.name, ', '.join(sorted(b._ip for b in self.bulbs)))
 
+    def closeConns(self):
+        logger.info("Closing conns")
+        for bulb in self.bulbs:
+            del bulb
+
+    def openConns(self):
+        self.rebuild_bulbs()
+
+
     def rebuild_bulbs(self):
         found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(3) if bulb['ip'] in room_to_ips[self.name] )
         current_bulb_ips = sorted(bulb._ip for bulb in self.bulbs)
@@ -62,15 +100,22 @@ class Room:
                 logger.info('Statically rebuilding bulb list')
                 self.bulbs = [ yeelight.Bulb(ip) for ip in room_to_ips[self.name] ]
             else:
+                if YEELIGHT_USE_SAFE_BULBS:
+                    logger.info("Adding Safe bulbs")
+                    found_bulb_ips = list(set(found_bulb_ips) | safe_room_to_ips[self.name])
                 self.bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulb_ips]
             try:
-                self.resetFromLoggedState()
+                #self.autoset(0, force=True)
+                self.resetFromLoggedState(include_IP_states=False)
             except Exception:
                 logger.exception('Got exception when restting bulbs in rebuild_bulbs')
 
     def writeState(self, newState):
         "Write out the state of the bulbs in the room"
         global pcStatus, phoneStatus
+        if newState in hiddenCommands:
+            bulbLog.info( "Command was %s, not actually saving" , newState )
+            return
         bulbLog.info('%s = %s', self.name, newState)
         self.state = newState
         if not os.path.exists(self.room_dir):
@@ -141,7 +186,7 @@ class Room:
                 jdict['state'] = 'off'
         return jdict
     
-    def resetFromLoggedState(self):
+    def resetFromLoggedState(self, include_IP_states=True):
         """
         Crash recovery. Reset light and color values from their last saved state.
         :return:
@@ -150,29 +195,35 @@ class Room:
         global pcStatus
         
         jdict = self._getLastState()
-        state = jdict['state']
-        self.state = state
-        phoneStatus = jdict['phoneStatus']
-        pcStatus = jdict['pcStatus']
-        logger.info('Restting %s to last state of %s', self.name, state)
-        if state == 'day':
-            self.day()
-        elif state == 'dusk':
-            self.dusk()
-        elif state == 'night':
-            self.night()
-        elif state == 'sleep':
-            self.sleep()
-        elif state == 'off':
+        lastState = jdict['state']
+        self.state = lastState
+        if include_IP_states:
+            phoneStatus = jdict['phoneStatus']
+            pcStatus = jdict['pcStatus']
+        logger.info('Restting %s to last state of %s', self.name, lastState)
+        states = [bulb.get_properties(['power','ct','bright']) for bulb in self.bulbs]
+
+        if lastState == 'off' and not all(state['power'] == 'off' for state in states):
             self.off()
-        elif state == 'on':
+        elif lastState == 'on' and not all(state['power'] == 'on' for state in states):
             self.on()
-        elif state == 'color':
-            pass  # Color is being manually manipulated, don't touch
-        elif 'custom:' in state:
-            temperature, brightness = state.split(':')[1:]
-            self.customTempFlow(int(temperature), brightness=int(brightness))
-    
+        elif lastState == 'day' and not all( int(state['ct']) == DAY_COLOR and int(state['bright']) == DAY_BRIGHTNESS for state in states):
+            self.day()
+        elif lastState == 'dusk' and not all( int(state['ct']) == DUSK_COLOR and int(state['bright']) == DUSK_BRIGHTNESS for state in states):
+            self.dusk()
+        elif lastState == 'night' and not all( int(state['ct']) == NIGHT_COLOR and int(state['bright']) == NIGHT_BRIGHTNESS for state in states):
+            self.night()
+        elif lastState == 'sleep' and not all( int(state['ct']) == SLEEP_COLOR and int(state['bright']) == SLEEP_BRIGHTNESS for state in states):
+            self.sleep()
+        elif lastState == 'color':
+            pass # Color is being manually manipulated, don't touch
+        elif 'custom:' in lastState:
+            temperature, brightness = lastState.split(':')[1:]
+            if not all( int(state['ct']) == int(temperature) and int(state['bright']) == int(brightness) for state in states):
+                self.customTempFlow(int(temperature), brightness=int(brightness))
+
+
+
     def graceful_kill(self):
         logger.info('Shutting down %s', self.name)
         self.writeState(self.state)
@@ -185,7 +236,7 @@ class Room:
     
     def day(self, duration=3000, auto=False):
         if not auto:
-            self.on()
+            self.on(auto=auto)
         self.writeState('day')
         # 3200
         self.colorTempFlow(DAY_COLOR, duration, DAY_BRIGHTNESS)
@@ -193,7 +244,7 @@ class Room:
     
     def dusk(self, duration=3000, auto=False):
         if not auto:
-            self.on()
+            self.on(auto=auto)
         self.writeState('dusk')
         # 3000
         self.colorTempFlow(DUSK_COLOR, duration, DUSK_BRIGHTNESS)
@@ -201,58 +252,63 @@ class Room:
     
     def night(self, duration=3000, auto=False):
         if not auto:
-            self.on()
+            self.on(auto=auto)
         self.writeState('night')
         self.colorTempFlow(NIGHT_COLOR, duration, NIGHT_BRIGHTNESS)
     
     
     def sleep(self, duration=3000, auto=False):
         if not auto:
-            self.on()
+            self.on(auto=auto)
         self.writeState('sleep')
         self.colorTempFlow(SLEEP_COLOR, duration, SLEEP_BRIGHTNESS)
     
     
     def customTempFlow(self, temperature, duration=3000, auto=False, brightness=80):
         if not auto:
-            self.on()
+            self.on(auto=auto)
         self.writeState('custom:%d:%d' % (temperature, brightness,))
         self.colorTempFlow(temperature, duration, brightness)
- 
+
+    def _onoff(self, f):
+        # To reduce the input delay between pressing the button and actually performing the action,
+        #   Perform on all, then begin the loop for ones that haven't changed after the first blast.
+        #   Then write state
+        assert f in ('on','off')
+        for i in self.bulbs:
+            i.turn_off() if f == 'off' else i.turn_on()
+
+        while True:
+            if all(x.get_properties(['power'])['power'] == f for x in self.bulbs):
+                break
+            for i in [x for x in self.bulbs if x.get_properties(['power'])['power'] != f ]:
+                i.turn_off() if f == 'off' else i.turn_on()
+
+        self.writeState(f)
+
+
     @retry
     def off(self, auto=False):
         if auto:
             # Check if system tray has been used recently to override autoset
             ld = readManualOverride(self.name)
-            if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
+            if ld + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow():
                 bulbLog.info("SystemTray used recently, canceling autoset")
                 return -1
             logger.info('autoset_auto off')
-        
-        self.writeState('off')
-        while True:
-            for i in [x for x in self.bulbs if x.get_properties(['power'])['power'] == 'on']:
-                i.turn_off()
-            # time.sleep(0.2)
-            if all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
-                break
+
+        self._onoff('off')
     
     @retry
-    def on(self):
-        self.writeState('on')
-        while True:
-            for i in [x for x in self.bulbs if x.get_properties(['power'])['power'] == 'off']:
-                i.turn_on()
-            # time.sleep(0.2)
-            if all(x.get_properties(['power'])['power'] == 'on' for x in self.bulbs):
-                break
-    
+    def on(self, auto=False):
+        self._onoff('on')
+        if not auto:
+            self.autoset(autosetDuration=1, force=True, forceLight=True )
     
     def toggle(self):
         """
         Doesn't use the built in toggle command in yeelight as it sometimes fails to toggle one of the lights.
         """
-        
         oldPower = self.bulbs[0].get_properties(['power'])['power']
         if oldPower == 'off':
             self.on()
@@ -274,13 +330,30 @@ class Room:
         # control all lights at once
         # makes things look more condensed
         transition = yeelight.TemperatureTransition(degrees=temperature, duration=duration, brightness=brightness)
+
+        # The GU-10 bulbs don't support color temperature, so do some approximation to use
+        #   RGB settings instead.
+        if any(i._ip in GU_BULBS for i in self.bulbs):
+            red, green, blue = ct_to_rgb(temperature)
+            rgb_transition = yeelight.RGBTransition(red=red, green=green, blue=blue)
+
         for i in self.bulbs:
-            i.start_flow(yeelight.Flow(count=1,
+            if i._ip in GU_BULBS:
+                i.start_flow(yeelight.Flow(count=1,
+                                            action=yeelight.Flow.actions.stay,
+                                            transitions=[rgb_transition]))
+            else:
+                i.start_flow(yeelight.Flow(count=1,
                                        action=yeelight.Flow.actions.stay,
                                        transitions=[transition]))
     
-    
-    def autoset(self, autosetDuration=AUTOSET_DURATION, autoset_auto_var=False, force=False):
+    @catchErr
+    def autoset(self,
+        autosetDuration=AUTOSET_DURATION,   # Transition period between current and autoset light
+        autoset_auto_var=False,             # Automated call from timer
+        force=False,                        # Override any manual override
+        forceLight = False,                 # Force DND range to use sleep lighting.
+        ):
         if not force and all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
             logger.info('Power is off, cancelling autoset')
             return -1
@@ -289,9 +362,19 @@ class Room:
         if not force and not autoset_auto_var:
             # Check if system tray has been used recently to override autoset
             ld = readManualOverride(self.name)
-            if ld + datetime.timedelta(hours=1) > datetime.datetime.utcnow():
+            if ld + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow():
                 logger.info("Autoset: SystemTray used recently, canceling autoset")
                 return -1
+
+        if AUTOSET_PHONE_REQUIRED and not force and autoset_auto_var:
+            ld = readManualOverride(self.name)
+            if ld + MANUAL_OVERRIDE_OFFSET < datetime.datetime.utcnow():
+                if not phoneStatus:
+                    logger.info("AUTOSET_PHONE_REQUIRED is True and all conditions are met")
+                    off(auto=True)
+                    return -1
+
+
 
         from yeelightLib import SUNSET_TIME
         getCalcTimes()
@@ -313,18 +396,21 @@ class Room:
         
         
         timeranges = [dayrange, nightrange, DNDrange]
+        auto = not force
+        if inspect.stack()[2].function == 'on':
+            auto = True
         for r in timeranges:
             for rr in range(0, 2):
                 t = datetime.datetime.strptime(r[rr], "%I:%M:%p")
                 r[rr] = datetime.time(t.hour, t.minute, 0)
         if dayrange[0] <= now < dayrange[1]:
             logger.info("Autoset: Day")
-            self.day(autosetDuration, not force)
+            self.day(autosetDuration, auto=auto)
         elif nightrange[0] <= now and now < nightrange[1]:
             for (startTime, endTime, temperature, brightness) in autosetNightRange:
                 if startTime <= now and now < endTime:
                     logger.info("Autoset: temperature: %d brightness %d" % (temperature, brightness))
-                    self.customTempFlow(temperature, duration=autosetDuration, auto=not force, brightness=brightness)
+                    self.customTempFlow(temperature, duration=autosetDuration, auto=auto, brightness=brightness)
                     return 0
             else:
                 warnstr = ["Didn't find applicable range!!!"]
@@ -337,6 +423,10 @@ class Room:
                 logger.warning('\n'.join(str(x) for x in warnstr))
         elif DNDrange[0] <= now or now < DNDrange[1]:
             logger.info("Autoset: dnd")
+            if forceLight:
+                logger.info("Force light is True, setting light to sleep colors")
+                self.sleep(0, auto=auto)
+                return 0
             self.off()
         return 0
 

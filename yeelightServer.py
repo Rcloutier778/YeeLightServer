@@ -8,18 +8,12 @@ import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from logging.handlers import RotatingFileHandler
 
-import matplotlib
-
-matplotlib.use('Agg')
-import matplotlib.pyplot as plt
 import os
 import os.path
 import base64
 import platform
-from yeelightpython import global_action
-
 from yeelightLib import *
-
+import room
 
 HOMEDIR = __file__.rsplit(os.sep, 1)[0]
 # logging.basicConfig(filename=HOMEDIR+'serverLog.log',
@@ -51,9 +45,9 @@ class MyHandler(BaseHTTPRequestHandler):
     
     def do_GET(self):
         paths = {
-            '/panel': {'status': 200}
+            #'/panel': {'status': 200}
+            '': {'status':200}
         }
-        
         if self.path in paths:
             self.respond(paths[self.path])
         else:
@@ -107,6 +101,10 @@ class MyHandler(BaseHTTPRequestHandler):
 </body></html>\n''' % img
                 doc = GET_panel()
                 content = content % ('<br>\n'.join(str(x) for x in doc))
+            elif path in ('','/'):
+                content = '''<html><head><title>Yeelight</title></head>
+                <body>%s</body></html>
+                ''' % '<br>\n'.join(str(x) for x in GET_main())
             else:
                 content = '''
                 <html><head><title>Title goes here.</title></head>
@@ -125,6 +123,23 @@ class MyHandler(BaseHTTPRequestHandler):
     def respond(self, opts):
         response = self.handle_http(opts['status'], self.path)
         self.wfile.write(response)
+
+def GET_main():
+    doc = []
+    rooms = os.listdir(os.path.join(HOMEDIR,'roomStates'))
+    doc.append('<table><tr><th>Room</th><th>State</th></tr>')
+
+    for room in rooms:
+        with open(os.path.join(HOMEDIR,'roomStates',room,'state'),'r') as f:
+            stateDict = json.load(f)
+
+        doc.append('<tr><td>%s</td><td>%s</td></tr>' % ( room, stateDict['state'] ) )
+
+
+    
+
+
+    return doc
 
 
 def GET_panel():

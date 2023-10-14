@@ -46,7 +46,7 @@ def checkPing(pcStatus, phoneStatus):
             attempts = 0
             continue
         elif not phone_response:  # phone is missing
-            if attempts == MAX_PHONE_ATTEMPTS:  # try until MAX_PHONE_ATTEMPTS is reached
+            if attempts >= MAX_PHONE_ATTEMPTS:  # try until MAX_PHONE_ATTEMPTS is reached
                 logger.info("Phone missing")
                 pcStatus = pc_response
                 phoneStatus = phone_response

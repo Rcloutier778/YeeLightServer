@@ -1,6 +1,7 @@
 import datetime
 from functools import wraps
 import logging
+import math
 import os
 import pickle
 import time
@@ -10,14 +11,32 @@ HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
 ROOM_DIR = os.path.join(ROOM_STATES_DIR, '{room}')
 
-BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15", "10.0.0.20"]
-room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.10", "10.0.0.20" ], 'Bedroom':["10.0.0.15"] }
+room_to_ips = {
+    'LivingRoom': ["10.0.0.20", "10.0.0.30", "10.0.0.35", "10.0.0.36","10.0.0.37","10.0.0.38"],
+    'Den': ["10.0.0.5","10.0.0.10"],
+    'Bedroom': ["10.0.0.15", "10.0.0.40"],
+}
+
+# Bulbs that we know should always be connected to power
+#   IE: Not on a switch
+safe_room_to_ips = {
+    'LivingRoom': {"10.0.0.20","10.0.0.30","10.0.0.35"},
+    'Den': {"10.0.0.5","10.0.0.10"},
+    'Bedroom': {"10.0.0.15", "10.0.0.40"},
+}
+
+
+GU_BULBS = [ "10.0.0.36", "10.0.0.37", "10.0.0.38" ]
+BULB_IPS = [ x for sublist in room_to_ips.values() for x in sublist ]
+
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 
 MANUAL_OVERRIDE_PATH = os.path.join(ROOM_DIR, 'manualOverride.txt')
 
-bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb']
+# Don't write these commands in writeState
+hiddenCommands = ['rebuild_bulbs','closeConns','openConns']
+bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb' ] + hiddenCommands
 
 commands = bulbCommands + ['run_server', 'sunrise_http']
 allcommands = commands + ['bright', 'brightness']
@@ -52,13 +71,36 @@ REST_SERVER_PORT_NUMBER = 9001 #Update sunrise.sh too!
 pcStatus = True
 phoneStatus = True
 
+# Does the phone have to be present for autoset to fire?
+AUTOSET_PHONE_REQUIRED = True
+
+SWITCH_RESTART_KEYWORD = "__RESTART"
+
+
+# The GU10 bulbs don't support color temperature, so do your best shot at RGB approx
+# https://planetpixelemporium.com/tutorialpages/light.html
+TEMP_TO_RGB_DICT = {
+    1900 : [255,147,41],
+    2600 : [255,197,143],
+    2850 : [255,214,170],
+    3200 : [255,241,224],
+    5200 : [255,250,244],
+    5400 : [255,255,251],
+    6000 : [255,255,255],
+}
+
+MANUAL_OVERRIDE_OFFSET = datetime.timedelta(hours=1)
+
+
 formatter = logging.Formatter('%(asctime)s [pid %(process)d] %(levelname)s %(message)s')
 
 actualLoggers = {}
 
 
 try:
-    from setproctitle import setproctitle as setprocname
+    from setproctitle import setproctitle
+    def setprocname(name):
+        return setproctitle( "Yeelight " + name )
 except ImportError:
     def setprocname(name):
         return
@@ -74,13 +116,50 @@ def getLogger(quiet=False):
     
     logger = logging.getLogger('log')
     logger.setLevel(logging.INFO)
-    fh = RotatingFileHandler(logpath, maxBytes=1024*1024*5, mode='a', backupCount=2, delay=0)
+    fh = RotatingFileHandler(logpath, maxBytes=1024*1024*30, mode='a', backupCount=2, delay=1)
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
     actualLoggers['log'] = logger
     logger.info('Logging to %s', logpath)
     return logger
+
+def ct_to_rgb(ct):
+    #https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html
+    ct = int(ct)
+    ct = ct/100
+
+    if ct <= 66:
+        red = 255
+    else:
+        red = ct - 60
+        red = 329.698727446 * (red ** -0.1332047592)
+        red = max( 0, red )
+        red = min( 255, red )
+
+    if ct <= 66:
+        green = ct
+        # this is natural log not normal log
+        green = ( 99.4708025861 * math.log(green) ) - 161.1195681661
+    else:
+        green = ct - 60
+        green = 288.1221695283 * (green ** -0.0755148492)
+
+    green = min(255, green)
+    green = max( 0, green)
+
+    if ct >= 66:
+        blue = 255
+    else:
+        if ct <= 19:
+            blue = 0
+        else:
+            blue = ct -10
+            blue = ( 138.5177312231 * math.log(blue) ) - 305.447927307
+            blue = min(255, blue)
+            blue = max( 0, blue)
+
+    return [int(red), int(green), int(blue)]
 
 
 def getBulbLogger():
@@ -89,7 +168,7 @@ def getBulbLogger():
         return actualLoggers.get('bulbLog')
     bulbLog = logging.getLogger('bulbLog')
     bulbLog.setLevel(logging.DEBUG)
-    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024, delay=0, mode='a')
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024*1024, delay=0, mode='a', backupCount=0)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     bulbLog.addHandler(fh)
