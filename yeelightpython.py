@@ -45,45 +45,66 @@ SERVER_ACTS_NOT_CLIENT = True
 # Does the room class handle the rebuild?
 YEELIGHT_ROOM_HANDLES_REBUILD = True
 
+def _initialize_cli_bulbs():
+    """Initialize the configured bulbs and room objects used by CLI commands."""
+    global bulbs
+    global ROOMS
+
+    bulbs = []
+    configured_ips = {ip for ips in room_to_ips.values() for ip in ips}
+    assert all(bulb_ip in configured_ips for bulb_ip in BULB_IPS)
+
+    for roomName, ips in room_to_ips.items():
+        blbs = [Bulb(ip, roomName=roomName) for ip in ips]
+        bulbs.extend(blbs)
+        # Keep the bulbs we just created; constructing an empty Room silently
+        # makes every CLI room appear to have no bulbs.
+        ROOMS[roomName] = Room(roomName, blbs, ENV_STATE)
+
+
 def main():
     # logger.info(desk.get_properties())
     global bulbs
-    global ROOMS
-    
+
     if len(sys.argv) == 1:
         logger.info("No arguments.")
         logger.warning('No arguments.')
         return
-    else:
-        cmd = sys.argv[1].lower()
-        if cmd in allcommands:
-            if cmd in commands:
-                if 'autoset' not in cmd:
-                    logger.info(cmd)
-                bulbs = []
-                assert all(bulb_ips in set( y for x in room_to_ips.values() for y in x) for bulb_ips in BULB_IPS)
-                for roomName, ips in room_to_ips.items():
-                    blbs = []
-                    for ip in ips:
-                        bulb = Bulb(ip, roomName=roomName)
-                        bulbs.append(bulb)
-                        blbs.append(bulb)
-                    ROOMS[roomName] = Room(roomName, [], ENV_STATE)
-                if cmd == 'run_server':
-                    run_server()
-                elif cmd == 'sunrise':
-                    sunrise()
-                elif cmd == 'sunrise_http':
-                    sunrise_http()
-                else:
-                    globals()['global_action'](cmd)
-        elif cmd in ['bright', 'brightness']:
-            if type(sys.argv[2]) == int:
-                logger.info("Changing brightness to %d" % int(sys.argv[2]))
-                for i in bulbs:
-                    i.set_brightness(int(sys.argv[1]))
+
+    cmd = sys.argv[1].lower()
+
+    if cmd in commands:
+        if 'autoset' not in cmd:
+            logger.info(cmd)
+
+        _initialize_cli_bulbs()
+
+        if cmd == 'run_server':
+            run_server()
+        elif cmd == 'sunrise':
+            sunrise()
+        elif cmd == 'sunrise_http':
+            sunrise_http()
         else:
-            logger.info("Command \"%s\" not found" % cmd)
+            globals()['global_action'](cmd)
+
+    elif cmd in ['bright', 'brightness']:
+        if len(sys.argv) < 3:
+            logger.error('Brightness requires a value, e.g. "%s 50"', cmd)
+            return
+        try:
+            brightness = int(sys.argv[2])
+        except (TypeError, ValueError):
+            logger.error('Brightness must be an integer, got %r', sys.argv[2])
+            return
+
+        _initialize_cli_bulbs()
+        logger.info("Changing brightness to %d", brightness)
+        for bulb in bulbs:
+            bulb.set_brightness(brightness)
+
+    else:
+        logger.info("Command \"%s\" not found" % cmd)
 
 
 def rebuild_bulbs():
@@ -194,7 +215,8 @@ class Server(object):
         """
         logger.info('Gracefully shutting down lights server')
         for room in ROOMS.values():
-            room.influx_client.close()
+            if room.influx_client is not None:
+                room.influx_client.close()
         if USE_MONITOR_BULB_STATIC:
             self.monitor_bulb_static_proc.kill()
         if USE_MONITOR_ADVERT_BULBS:
@@ -308,7 +330,7 @@ class Server(object):
                         global_action('off', force=True)
                         writeManualOverride(offset=datetime.timedelta(days=30))
                         global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
-                elif self.switch_room:
+                if self.switch_room:
                     if self.switch_room == SWITCH_RESTART_KEYWORD:
                         logger.info("Got restart request from switch handler")
 
@@ -334,7 +356,7 @@ class Server(object):
                         datetime.timedelta(hours=2),
                         action='MANUAL_AUTOSET_FORCE_LIGHT' if self.switch_action == 'autoset' else self.switch_action
                     )
-                elif self.http_res is not None:
+                if self.http_res is not None:
                     logger.info('http')
                     logger.info(self.http_res)
                     if self.http_res['eventType'] == HTTP_EVENT_FROM_PC:
@@ -371,10 +393,17 @@ class Server(object):
                         logger.info('dashboard-query')
                         if self.http_res['query'] == 'getProperty':
                             logger.info('getProperty')
-                            tmp_bulbs = ROOMS[self.http_res['room']].bulbs
+                            room_name = self.http_res['room']
+                            if room_name not in ROOMS:
+                                raise ValueError('Unknown room: %s' % room_name)
+
+                            tmp_bulbs = ROOMS[room_name].bulbs
                             if tmp_bulbs:
-                                self.http_pipe.send(tmp_bulbs[0].get_properties([self.http_res['properties']]))
-                else:
+                                properties = list(self.http_res.get('properties', ()))
+                                self.http_pipe.send(tmp_bulbs[0].get_properties(properties))
+                            else:
+                                self.http_pipe.send({})
+                if self.ping_res is None and self.switch_room is None and self.http_res is None:
                     logger.info('Timer wake')
                     if not ( self.envState.phoneStatus and self.envState.pcStatus ):
                         logger.info("Phone(%s) and/or pc(%s) is offline, keeping lights off.", str(self.envState.phoneStatus), str(self.envState.pcStatus))

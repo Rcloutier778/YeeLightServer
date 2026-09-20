@@ -29,6 +29,7 @@ def YeelightHTTP(event, cond, pipe):
     class YeelightHandler(BaseHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             setprocname('http_server')
+            self.data_string = b''
             super(YeelightHandler, self).__init__(*args, **kwargs)
 
         def _set_headers(self):
@@ -69,23 +70,29 @@ def YeelightHTTP(event, cond, pipe):
         # Info queries
         def do_GET(self):
             paths = {
-                'property': [getProperty, 'json'],
+                'property': [getProperty, 'application/json'],
             }
-            _, base_path, *args = self.path.split('?',1)[0].split('/')
-            if base_path in paths:
-                func, content_type = paths[base_path]
+
+            parsed = urllib.parse.urlsplit(self.path)
+            path_parts = [urllib.parse.unquote(part) for part in parsed.path.split('/') if part]
+
+            if path_parts and path_parts[0] in paths:
+                func, content_type = paths[path_parts[0]]
+                args = path_parts[1:]
                 try:
                     status_code = 200
-                    kwargs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-                    content = func(*args, **kwargs)
+                    # getProperty is defined as (room, *properties), so pass
+                    # path components positionally instead of query-string
+                    # keyword arguments (which previously caused TypeError).
+                    content = func(*args)
                 except Exception as e:
                     status_code = 500
-                    content = 'ERROR: %s' % ' '.join(e.args)
+                    content = 'ERROR: %s' % str(e)
                     content_type = 'text/html'
                 self.respond(status_code, content, content_type)
             else:
                 self.respond(500, 'Not a valid path')
-        
+
         # Actions
         def do_POST(self):
             try:
@@ -96,7 +103,7 @@ def YeelightHTTP(event, cond, pipe):
                 assert data['eventType'] in ('dashboard', HTTP_EVENT_FROM_PC, 'zigbee', 'zigbeeSwitch')
                 if data['eventType'] == 'dashboard':
                     data['eventType'] += '-action'
-                assert data['newState'] in bulbCommands + ['color']
+                assert data['newState'] in bulbCommands
 
                 # Probably will need to pass in funky stuff for autoset and such
                 room = data.get('room')
@@ -120,14 +127,14 @@ def YeelightHTTP(event, cond, pipe):
                     cond.notify()
                 
                 self.send_response(200)
-                self.send_header('Content-type', 'json')
+                self.send_header('Content-type', 'application/json')
                 self.end_headers()
                 
             except Exception:
                 logger.exception("YeelightHTTP error")
                 logger.error(self.data_string)
                 self.send_response(500)
-                self.send_header('Content-type', 'json')
+                self.send_header('Content-type', 'application/json')
                 self.end_headers()
     
     

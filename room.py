@@ -75,7 +75,10 @@ class Room:
                                    #cert='/etc/ssl/influxdb/influxdb-selfsigned.crt',
                                    token = open('/home/richard/influx.secret','r').read().strip()
                                    ) if 'Windows' not in platform.platform() else None
-        self.influx_writer = self.influx_client.write_api(write_options=SYNCHRONOUS)
+        self.influx_writer = (
+            self.influx_client.write_api(write_options=SYNCHRONOUS)
+            if self.influx_client is not None else None
+        )
 
         self.rebuild_bulbs()
         #self.bulb_listener = self.listen_for_bulb_updates()
@@ -207,16 +210,17 @@ class Room:
                 logger.exception('got error when getting color and brightness')
                 return
 
-            try:
-                self.influx_writer.write('yeelight', 'orgname', [{'measurement':'room_state',
-                                             'fields':{
-                                                 'room': self.name,
-                                                 'state': newState.split(':', 1)[0],
-                                                 'color': int(color),
-                                                 'brightness': int(brightness),
-                                             }}])
-            except Exception:
-                logger.exception('Got error trying to write to influx')
+            if self.influx_writer is not None:
+                try:
+                    self.influx_writer.write('yeelight', 'orgname', [{'measurement':'room_state',
+                                                 'fields':{
+                                                     'room': self.name,
+                                                     'state': newState.split(':', 1)[0],
+                                                     'color': int(color),
+                                                     'brightness': int(brightness),
+                                                 }}])
+                except Exception:
+                    logger.exception('Got error trying to write to influx')
     
     
     
@@ -444,22 +448,48 @@ class Room:
             raise RuntimeError('Hit max retries in _threadedColorTempFlow')
 
     def threadedColorTempFlow(self, temperature=3200, duration=3000, brightness=80):
-        # control all lights at once
-        # makes things look more condensed
-        transition = yeelight.TemperatureTransition(degrees=temperature, duration=duration, brightness=brightness)
+        # Control all lights at once; run each network request concurrently.
+        transition = yeelight.TemperatureTransition(
+            degrees=temperature, duration=duration, brightness=brightness
+        )
 
-        # The GU-10 bulbs don't support color temperature, so do some approximation to use
-        #   RGB settings instead.
+        # The GU-10 bulbs don't support color temperature, so approximate it
+        # with an RGB transition instead.
+        rgb_transition = None
         if any(i._ip in GU_BULBS for i in self.bulbs):
             red, green, blue = ct_to_rgb(temperature)
-            rgb_transition = yeelight.RGBTransition(red=red, green=green, blue=blue)
+            rgb_transition = yeelight.RGBTransition(
+                red=red, green=green, blue=blue
+            )
+
+        errors = []
+
+        def run_bulb(bulb):
+            try:
+                self._threadedColorTempFlow(
+                    bulb,
+                    rgb_transition if bulb._ip in GU_BULBS else transition,
+                )
+            except Exception as exc:
+                errors.append((bulb._ip, exc))
+
         threads = []
         for bulb in self.bulbs:
-            thread = threading.Thread(target=self._threadedColorTempFlow, args=(bulb, rgb_transition if bulb._ip in GU_BULBS else transition))
+            thread = threading.Thread(target=run_bulb, args=(bulb,))
             thread.start()
             threads.append(thread)
+
         for thread in threads:
             thread.join()
+
+        if errors:
+            for ip, exc in errors:
+                logger.error(
+                    'Color-temperature flow failed permanently for bulb %s: %s',
+                    ip,
+                    exc,
+                )
+            raise errors[0][1]
     
 
     #@retry

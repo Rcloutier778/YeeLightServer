@@ -105,7 +105,7 @@ def monitor_switches(event, cond, pipe):
                     logger.warn("Got None as rtl_433 output %d times!", noneResCount)
                 if noneResCount >= 100:
                     noneResCount = 0
-                    restart_proc()
+                    proc = restart_proc()
                 continue
             noneResCount = 0
             try:
