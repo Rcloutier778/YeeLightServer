@@ -14,14 +14,14 @@ import time
 import yeelight
 import yeelight.enums
 import yeelight.transitions
-
+import yeelight.aio
 
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from yeelightLib import *
 from room import Room
 from handlers.checkPing import checkPingThreaded
-from handlers.bulb_events import monitor_advert_bulbs, monitor_bulb_static
+from handlers.bulb_events import monitor_advert_bulbs, monitor_bulb_static, monitor_bulb_ping, USE_MONITOR_ADVERT_BULBS, USE_MONITOR_BULB_STATIC, USE_MONITOR_BULB_PING
 from handlers.switches import monitor_switches
 from handlers.http_events import http_server
 
@@ -34,27 +34,22 @@ bulbLog = getBulbLogger()
 
 bulbs = []
 
-ROOMS = {roomName : Room(roomName, [yeelight.Bulb(ip) for ip in ips]) for roomName, ips in room_to_ips.items()}
+ENV_STATE = EnvState() # Don't call this directly except for init of Server and ROOMS
+
+ROOMS = {roomName : Room(roomName, [Bulb(ip, roomName=roomName) for ip in ips], ENV_STATE) for roomName, ips in room_to_ips.items()}
 
 
 # Should the server execute the command or should the client?
-SERVER_ACTS_NOT_CLIENT = True 
+SERVER_ACTS_NOT_CLIENT = True
 
+# Does the room class handle the rebuild?
+YEELIGHT_ROOM_HANDLES_REBUILD = True
 
 def main():
     # logger.info(desk.get_properties())
     global bulbs
     global ROOMS
-    '''
-    import subprocess
-
-    response=subprocess.getstatusoutput('ping -n 2 10.0.0.7')
-    if 'time=' not in response[1]: #timeout, phone not present.
-        logger.info("Phone not present.")
-        logger.warning("Phone not present.")
-        off()
-        return
-    '''
+    
     if len(sys.argv) == 1:
         logger.info("No arguments.")
         logger.warning('No arguments.')
@@ -70,10 +65,10 @@ def main():
                 for roomName, ips in room_to_ips.items():
                     blbs = []
                     for ip in ips:
-                        bulb = yeelight.Bulb(ip)
+                        bulb = Bulb(ip, roomName=roomName)
                         bulbs.append(bulb)
                         blbs.append(bulb)
-                    ROOMS[roomName] = Room(roomName, [])
+                    ROOMS[roomName] = Room(roomName, [], ENV_STATE)
                 if cmd == 'run_server':
                     run_server()
                 elif cmd == 'sunrise':
@@ -93,20 +88,43 @@ def main():
 
 def rebuild_bulbs():
     "Rebuild the bulb list."
-    global bulbs
-    found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
-    current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
-    if current_bulbs_ips != found_bulbs_ip:
-        new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
-        missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
-        for new_ip in new_ips:
-            logger.info('Found new bulb at ip addr: %s', new_ip)
-        for missing_ip in missing_ips:
-            logger.info('Missing bulb at ip addr: %s', missing_ip)
-            
-        bulbs = [yeelight.Bulb(found_ip) for found_ip in found_bulbs_ip]
+    if YEELIGHT_ROOM_HANDLES_REBUILD:
         for room in ROOMS.values():
             room.rebuild_bulbs()
+    else:
+        global bulbs
+        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
+        current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
+        if current_bulbs_ips != found_bulbs_ip:
+            new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
+            missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+            for new_ip in new_ips:
+                logger.info('Found new bulb at ip addr: %s', new_ip)
+            for missing_ip in missing_ips:
+                logger.info('Missing bulb at ip addr: %s', missing_ip)
+                
+            bulbs = [Bulb(found_ip) for found_ip in found_bulbs_ip]
+            for room in ROOMS.values():
+                room.rebuild_bulbs()
+
+
+def websocketTest(pipe):
+    def websocketHandler(ws):
+        while True:
+            contents = pipe.recv()
+            logger.info(f'In websocket, got {contents}')
+            try:
+                contents = json.dumps(contents)
+            except:
+                contents = str(contents)
+            ws.send(contents)
+
+    try:
+        import websockets.sync.server
+        with websockets.sync.server.serve(websocketHandler, '10.0.0.18', 9002) as server:
+            server.serve_forever()
+    except Exception:
+        logger.exception('Got exception for websocket')
 
 
 class Server(object):
@@ -122,33 +140,51 @@ class Server(object):
     """
     
     def __init__(self):
-        setprocname('Lights server')
+        global ENV_STATE
+        setprocname('Yeelight Lights server')
         set_IRL_sunset()
+        self.envState = ENV_STATE
         for room in ROOMS.values():
-            room.resetFromLoggedState()
-        self.bulb_event = mp.Event()
+            try:
+                room.resetFromLoggedState()
+            except Exception as e:
+                logger.error(e)
         self.wake_condition = mp.Condition()
         self.TIMEOUT_INTERVAL = 5*60 # 5 min
-        self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event, self.wake_condition,))
-        self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event, self.wake_condition,))
+
+
+        self.bulb_event = mp.Event()
+        #self.bulb_pipe, bulb_child_pipe = mp.Pipe()
+        if USE_MONITOR_ADVERT_BULBS:
+            self.monitor_bulb_advert_proc = mp.Process(target=monitor_advert_bulbs, args=(self.bulb_event, self.wake_condition,))
+        if USE_MONITOR_BULB_STATIC:
+            self.monitor_bulb_static_proc = mp.Process(target=monitor_bulb_static, args=(self.bulb_event, self.wake_condition,))
+        if USE_MONITOR_BULB_PING:
+            self.monitor_bulb_ping_proc = mp.Process(target=monitor_bulb_ping, args=(self.bulb_event, self.wake_condition,))
+
 
         self.ping_event = mp.Event()
         self.ping_pipe, ping_child_pipe = mp.Pipe()
-        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, ping_child_pipe, self.wake_condition,pcStatus, phoneStatus,))
+        self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, ping_child_pipe, self.wake_condition, self.envState.pcStatus, self.envState.phoneStatus,))
         self.ping_res = True
         self.timer_wake = False
-        
+
+
         self.switch_event = mp.Event()
         self.switch_pipe, switch_child_pipe = mp.Pipe()
         self.monitor_switches_proc = mp.Process(target=monitor_switches, args=(self.switch_event, self.wake_condition, switch_child_pipe, ))
         self.switch_room = None
         self.switch_action = None
-       
+
+
         self.http_event = mp.Event()
         self.http_pipe, http_child_pipe = mp.Pipe()
         self.http_proc = mp.Process(target=http_server, args=(self.http_event, self.wake_condition, http_child_pipe, ))
         self.http_res = None
 
+
+        self.websocket_pipe, websocket_child_pipe = mp.Pipe()
+        self.websocket_proc = mp.Process(target=websocketTest, args=(websocket_child_pipe,), daemon=True)
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
 
     def graceful_shutdown(self, *args, **kwargs):
@@ -159,14 +195,20 @@ class Server(object):
         logger.info('Gracefully shutting down lights server')
         for room in ROOMS.values():
             room.influx_client.close()
-        self.monitor_bulb_static_proc.kill()
-        self.monitor_bulb_advert_proc.kill()
+        if USE_MONITOR_BULB_STATIC:
+            self.monitor_bulb_static_proc.kill()
+        if USE_MONITOR_ADVERT_BULBS:
+            self.monitor_bulb_advert_proc.kill()
+        if USE_MONITOR_BULB_PING:
+            self.monitor_bulb_ping_proc.kill()
         self.check_ping_proc.kill()
         self.monitor_switches_proc.kill() #TODO
         self.http_proc.terminate()
+        self.websocket_proc.kill()
         self.ping_pipe.close()
         self.switch_pipe.close()
         self.http_pipe.close()
+        self.websocket_pipe.close()
         for room in ROOMS.values():
             room.graceful_kill()
             
@@ -184,24 +226,34 @@ class Server(object):
         Resolve whatever event woke the main thread
         :return:
         """
-        global phoneStatus, pcStatus
         logger.info("Resolving wake")
         if self.bulb_event.is_set():
             logger.info("Resolving bulb event")
+            #logger.critical("Skipping bulb wake event")
             rebuild_bulbs()
             self.bulb_event.clear()
         if self.ping_event.is_set():
             logger.info("Resolving ping event")
             self.timer_wake = False
-            global phoneStatus
-            global pcStatus
             phoneStatus, pcStatus, self.ping_res = self.ping_pipe.recv()
+            self.envState.phoneStatus = phoneStatus
+            self.envState.pcStatus = pcStatus
             self.ping_event.clear()
         if self.switch_event.is_set():
             logger.info("Resolving switch event")
             self.switch_room, self.switch_action = self.switch_pipe.recv()
             self.switch_event.clear()
             self.switch_pipe.send(0)
+            os.system('''sudo sh -c "echo -e '\a' > /dev/console"''')
+            self.websocket_pipe.send((self.switch_room, self.switch_action))
+            # Ensure pipe is empty
+            while True:
+                if self.switch_pipe.poll():
+                    logger.warn("Found extra items in pipe!: %s", str( self.switch_pipe.recv() ) )
+                else:
+                    break
+
+            
             # switch proc did not get the ack from us and has sent a still_alive request
             if self.switch_room == '' and self.switch_action is None:
                 self.switch_room = None
@@ -216,13 +268,21 @@ class Server(object):
         :return:
         """
         logger.error("Booting server")
-        self.monitor_bulb_advert_proc.start()
-        self.monitor_bulb_static_proc.start()
+        if USE_MONITOR_ADVERT_BULBS:
+            self.monitor_bulb_advert_proc.start()
+        if USE_MONITOR_BULB_STATIC:
+            self.monitor_bulb_static_proc.start()
+        if USE_MONITOR_BULB_PING:
+            self.monitor_bulb_ping_proc.start()
         self.check_ping_proc.start()
         self.monitor_switches_proc.start()
         self.http_proc.start()
+        self.websocket_proc.start()
         systemStartTime = datetime.datetime.utcnow()
-        global_action('autoset', force=True)
+        try:
+            global_action('autoset', force=True)
+        except Exception:
+            logger.exception("Got exception when doing run_server first autoset, ignoring...")
         while True:
             try:
                 self.timer_wake = True
@@ -238,40 +298,75 @@ class Server(object):
                     if self.ping_res:
                         global_action('on')
                         global_action('autoset', force=True)
+                        writeManualOverride()
+                        global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
                     else:
                         # Temp fix for PC not having a valid IP address on waking from sleep.
                         sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p')
                         if datetime.datetime.now().time() >= sunrise_time.time() and datetime.datetime.now().time() <= (sunrise_time + datetime.timedelta(hours=1)).time():
                             continue
-                        global_action('off')
+                        global_action('off', force=True)
+                        writeManualOverride(offset=datetime.timedelta(days=30))
+                        global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
                 elif self.switch_room:
+                    if self.switch_room == SWITCH_RESTART_KEYWORD:
+                        logger.info("Got restart request from switch handler")
+
+                        self.monitor_switches_proc.kill()
+                        self.switch_pipe.close()
+                        self.switch_event = mp.Event()
+                        self.switch_pipe, switch_child_pipe = mp.Pipe()
+                        self.monitor_switches_proc = mp.Process(target=monitor_switches, args=(self.switch_event, self.wake_condition, switch_child_pipe, ))
+                        self.switch_room = None
+                        self.switch_action = None
+                        self.monitor_switches_proc.start()
+                        continue
                     if self.switch_room not in ROOMS:
                         logger.error('Received %s from switch_room, which is not in %s', self.switch_room, ', '.join(ROOMS))
                         continue
-                    writeManualOverride(self.switch_room, datetime.timedelta(hours=2))
                     logger.info('Switch in %s hit for %s', self.switch_room, self.switch_action)
-                    kwargs = {'autosetDuration': 3000, 'force':True} if self.switch_action == 'autoset' else {}
+                    kwargs = {'autosetDuration': SWITCH_FLOW_DURATION, 'force':True, 'forceLight':True} if self.switch_action == 'autoset' else {}
+                    if self.switch_action in COMMANDS_WITH_DURATION:
+                        kwargs['duration'] = SWITCH_FLOW_DURATION
                     getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
+                    writeManualOverride(
+                        self.switch_room,
+                        datetime.timedelta(hours=2),
+                        action='MANUAL_AUTOSET_FORCE_LIGHT' if self.switch_action == 'autoset' else self.switch_action
+                    )
                 elif self.http_res is not None:
                     logger.info('http')
-                    if self.http_res['eventType'] == 'manual':
+                    logger.info(self.http_res)
+                    if self.http_res['eventType'] == HTTP_EVENT_FROM_PC:
                         global_action('writeState',self.http_res["action"])
                         if not SERVER_ACTS_NOT_CLIENT:
                             logger.info('Manual http event, no further action taken')
                             continue
-                    if self.http_res['eventType'] == 'dashboard-action' or (SERVER_ACTS_NOT_CLIENT and self.http_res['eventType'] == 'manual'):
+                    if self.http_res['eventType'] in ('dashboard-action', 'zigbee', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and self.http_res['eventType'] == HTTP_EVENT_FROM_PC):
                         if self.http_res['action'] not in bulbCommands:
                             logger.error('Received %s as a command, which is not a valid command!' % self.http_res['action'])
                             continue
+                        if self.http_res['action'] in COMMANDS_WITH_DURATION:
+                            self.http_res['kwargs']['duration'] = SWITCH_FLOW_DURATION
                         if self.http_res['action'] == 'autoset':
                             self.http_res['kwargs']['force'] = True
                             self.http_res['kwargs']['autosetDuration'] = 3000
+                            if self.http_res['eventType'] == 'zigbeeSwitch':
+                                self.http_res['kwargs']['forceLight'] = True
+                                self.http_res['kwargs']['autosetDuration'] = SWITCH_FLOW_DURATION
                         if self.http_res['room'] == 'global':
                             logger.info('global http')
                             global_action(self.http_res['action'], **self.http_res['kwargs'])
                         else:
                             logger.info('Room level http')
                             getattr(ROOMS[self.http_res['room']], self.http_res['action'])(**self.http_res['kwargs'])
+
+                        if self.http_res['eventType'] in ('dashboard-action', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and self.http_res['eventType'] == HTTP_EVENT_FROM_PC):
+                            writeManualOverride(
+                                self.http_res['room'] if self.http_res['room'] != 'global' else None,
+                                datetime.timedelta(hours=2),
+                                action=('MANUAL_AUTOSET_FORCE_LIGHT' if self.http_res['action'] == 'autoset' else self.http_res['action'])
+                            )
                     elif self.http_res['eventType'] == 'dashboard-query':
                         logger.info('dashboard-query')
                         if self.http_res['query'] == 'getProperty':
@@ -281,33 +376,49 @@ class Server(object):
                                 self.http_pipe.send(tmp_bulbs[0].get_properties([self.http_res['properties']]))
                 else:
                     logger.info('Timer wake')
-                    global_action('autoset', AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
-    
+                    if not ( self.envState.phoneStatus and self.envState.pcStatus ):
+                        logger.info("Phone(%s) and/or pc(%s) is offline, keeping lights off.", str(self.envState.phoneStatus), str(self.envState.pcStatus))
+                        global_action('off', auto=True)#, autoset_auto_var = not self.timer_wake)
+                    else:
+                        global_action('autoset', AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
+
                 if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
                     systemStartTime = datetime.datetime.utcnow()
                     set_IRL_sunset()
+
+
+
             except Exception:
                 logger.exception("Exception in server run loop!")
                 rebuild_bulbs()
 
 
 def run_server():
-    server = Server()
-    server.run()
+    try:
+        server = Server()
+    except Exception:
+        logger.exception("Exception when setting up server")
+        raise
+    try:
+        server.run()
+    except Exception:
+        logger.exception("Unrecoverable error encountered when running server!")
+        raise
 
 def global_action(action, *args, **kwargs):
     if action not in bulbCommands + ['writeState']:
         logger.error('%s is not a valid global action!', action)
         return
     ex = None
-    for room in ROOMS.values():
+    for roomName, room in ROOMS.items():
         for attempt in range(3):
+            logger.info("Global action for %s", roomName)
             try:
                 getattr(room, action)(*args, **kwargs)
                 break
             except Exception as e:
                 ex = e
-                logger.warn('Failed to execute %s on try %d for %s\n%s\nargs:%s\nkwargs:%s', action, attempt+1, room.name, ' '.join(e.args), ', '.join(str(x) for x in args), kwargs)
+                logger.exception('Failed to execute %s on try %d for %s\n%s\nargs:%s\nkwargs:%s', action, attempt+1, room.name, ' '.join(e.args), ', '.join(str(x) for x in args), kwargs)
         else:
             raise ex
         
@@ -327,9 +438,10 @@ def sunrise():
     overallDuration = 1200000  # 1200000 == 20 min
     global_action('on')
     try:
-        for i in bulbs:
-            i.set_brightness(0)
-            i.set_rgb(255, 0, 0)
+        blbs = [blb for room_blbs in ROOMS.values() for blb in room_blbs]
+        for bulb in blbs:
+            bulb.set_brightness(0)
+            bulb.set_rgb(255, 0, 0)
 
         time.sleep(1)
 
@@ -338,8 +450,8 @@ def sunrise():
                        yeelight.TemperatureTransition(degrees=3200,
                                                       duration=overallDuration * 0.5, brightness=80)]
 
-        for i in bulbs:
-            i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
+        for bulb in blbs:
+            bulb.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
 
     except Exception:
         logger.exception('Got exception during sunrise')
@@ -349,7 +461,7 @@ def sunrise_http():
     http call for sunrise
     """
     import requests
-    requests.post('http://10.0.0.17:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'})
+    requests.post('http://10.0.0.18:%d' % REST_SERVER_PORT_NUMBER, json={'newState':'sunrise', 'eventType':'dashboard'}, timeout=60)
 
 
 if __name__ == "__main__":

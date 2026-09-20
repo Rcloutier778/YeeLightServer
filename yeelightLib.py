@@ -1,26 +1,54 @@
 import datetime
 from functools import wraps
+import json
 import logging
+import math
 import os
 import pickle
 import time
+import yeelight
+import yeelight.aio
 from logging.handlers import RotatingFileHandler
 
 HOMEDIR = os.path.dirname(os.path.abspath(__file__))
 ROOM_STATES_DIR = os.path.join(HOMEDIR, 'roomStates')
 ROOM_DIR = os.path.join(ROOM_STATES_DIR, '{room}')
 
-BULB_IPS = ["10.0.0.5", "10.0.0.10", "10.0.0.15"]
-room_to_ips = {'LivingRoom': ["10.0.0.5", "10.0.0.10" ], 'Bedroom':["10.0.0.15"] }
+room_to_ips = {
+    'LivingRoom':['10.0.0.15','10.0.0.10','10.0.0.40', "10.0.0.30"],
+    #'LivingRoom': ["10.0.0.20", "10.0.0.30", "10.0.0.35", "10.0.0.36","10.0.0.37","10.0.0.38"],
+    #'Den': ["10.0.0.5","10.0.0.10"],
+    'Bedroom': ["10.0.0.5", "10.0.0.20"],
+}
+
+# Bulbs that we know should always be connected to power
+#   IE: Not on a switch
+safe_room_to_ips = {
+    'LivingRoom': {"10.0.0.15","10.0.0.10","10.0.0.40", '10.0.0.30'},
+    #'Den': {"10.0.0.5","10.0.0.10"},
+    'Bedroom': {"10.0.0.5", "10.0.0.20"},
+}
+
+
+GU_BULBS = [ "10.0.0.36", "10.0.0.37", "10.0.0.38" ]
+BULB_IPS = [ x for sublist in room_to_ips.values() for x in sublist ]
+
 phoneIP = "10.0.0.7"
 pcIP = "10.0.0.2"
 
-MANUAL_OVERRIDE_PATH = os.path.join(ROOM_DIR, 'manualOverride.txt')
+MANUAL_OVERRIDE_PATH = os.path.join(ROOM_DIR, 'manualOverride.json')
 
-bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb']
+# Don't write these commands in writeState
+hiddenCommands = ['rebuild_bulbs','closeConns','openConns', 'returnFromAway']
+bulbCommands = ['dusk', 'day', 'night', 'sleep', 'off', 'on', 'toggle', 'sunrise', 'autoset', 'rgb' ] + hiddenCommands
 
 commands = bulbCommands + ['run_server', 'sunrise_http']
 allcommands = commands + ['bright', 'brightness']
+
+# Commands that have the duration kwarg
+#  These are commands we expect things like switches to call.
+COMMANDS_WITH_DURATION = ['dusk','day','night','sleep'] #don't include autoset
+SWITCH_FLOW_DURATION = 300
 
 DAY_COLOR = 4000
 DUSK_COLOR = 3300
@@ -29,6 +57,7 @@ SLEEP_COLOR = 1500
 SUNRISE_TIME = '6:50:AM'
 WEEKEND_SUNRISE_TIME = '8:00:AM'
 SUNSET_TIME = '5:30:PM'
+SUNSET_TIME_DYNAMIC_SET = False
 SLEEP_TIME = '10:30:PM'
 DAY_BRIGHTNESS = 80
 DUSK_BRIGHTNESS = 80
@@ -47,18 +76,55 @@ AUTOSET_DURATION = 300000
 LEGACY_SERVER_PORT_NUMBER = 9000
 
 # REST API server port
-REST_SERVER_PORT_NUMBER = 9001
+REST_SERVER_PORT_NUMBER = 9001 #Update sunrise.sh too!
 
 pcStatus = True
 phoneStatus = True
 
-formatter = logging.Formatter('%(asctime)s [pid %(process)d] %(levelname)s %(message)s')
+# Does the phone have to be present for autoset to fire?
+AUTOSET_PHONE_REQUIRED = True
+
+# If autoset is called from timer wake, check to see if the bulbs are already
+#   in the desired state. If they are, don't send commands. 
+AUTOSET_TIMER_CHECK_BEFORE_EXEC = True # Old behavior is False
+
+
+
+SWITCH_RESTART_KEYWORD = "__RESTART"
+
+
+# The GU10 bulbs don't support color temperature, so do your best shot at RGB approx
+# https://planetpixelemporium.com/tutorialpages/light.html
+TEMP_TO_RGB_DICT = {
+    1900 : [255,147,41],
+    2600 : [255,197,143],
+    2850 : [255,214,170],
+    3200 : [255,241,224],
+    5200 : [255,250,244],
+    5400 : [255,255,251],
+    6000 : [255,255,255],
+}
+
+MANUAL_OVERRIDE_OFFSET = datetime.timedelta(hours=1)
+
+HTTP_EVENT_FROM_PC = 'manual'
+
+# Actually call get_properties if True. Otherwise, return _last_properties dict. 
+#   _last_properties is updated by normal calls to yeelight (turn on/off, color chagnes, etc)
+# This is used in Bulb class below
+USE_GET_PROPERTIES = False
+
+
+#formatter = logging.Formatter('%(asctime)s [pid %(process)d] [%(filename)s] %(levelname)s %(message)s')
+formatter = logging.Formatter('%(asctime)s [%(filename)s] %(levelname)s %(message)s')
 
 actualLoggers = {}
 
 
 try:
-    from setproctitle import setproctitle as setprocname
+    from setproctitle import setproctitle
+    def setprocname(name):
+        return setproctitle( "Yeelight " + name )
 except ImportError:
     def setprocname(name):
         return
@@ -74,13 +140,50 @@ def getLogger(quiet=False):
     
     logger = logging.getLogger('log')
     logger.setLevel(logging.INFO)
-    fh = RotatingFileHandler(logpath, maxBytes=1024*1024*5, mode='a', backupCount=2, delay=0)
+    fh = RotatingFileHandler(logpath, maxBytes=1024*1024*30, mode='a', backupCount=2, delay=1)
     fh.setLevel(logging.INFO)
     fh.setFormatter(formatter)
     logger.addHandler(fh)
     actualLoggers['log'] = logger
     logger.info('Logging to %s', logpath)
     return logger
+
+def ct_to_rgb(ct):
+    #https://tannerhelland.com/2012/09/18/convert-temperature-rgb-algorithm-code.html
+    ct = int(ct)
+    ct = ct/100
+
+    if ct <= 66:
+        red = 255
+    else:
+        red = ct - 60
+        red = 329.698727446 * (red ** -0.1332047592)
+        red = max( 0, red )
+        red = min( 255, red )
+
+    if ct <= 66:
+        green = ct
+        # this is natural log not normal log
+        green = ( 99.4708025861 * math.log(green) ) - 161.1195681661
+    else:
+        green = ct - 60
+        green = 288.1221695283 * (green ** -0.0755148492)
+
+    green = min(255, green)
+    green = max( 0, green)
+
+    if ct >= 66:
+        blue = 255
+    else:
+        if ct <= 19:
+            blue = 0
+        else:
+            blue = ct -10
+            blue = ( 138.5177312231 * math.log(blue) ) - 305.447927307
+            blue = min(255, blue)
+            blue = max( 0, blue)
+
+    return [int(red), int(green), int(blue)]
 
 
 def getBulbLogger():
@@ -89,7 +192,7 @@ def getBulbLogger():
         return actualLoggers.get('bulbLog')
     bulbLog = logging.getLogger('bulbLog')
     bulbLog.setLevel(logging.DEBUG)
-    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024, delay=0, mode='a')
+    fh = RotatingFileHandler(os.path.join(HOMEDIR, 'bulbLog.log'), maxBytes=1024*1024, delay=0, mode='a', backupCount=0)
     fh.setLevel(logging.DEBUG)
     fh.setFormatter(formatter)
     bulbLog.addHandler(fh)
@@ -101,6 +204,8 @@ def getCalcTimes():
     # If you're going to use this, make sure to add 'from yeelightLib import SUNSET_TIME' right above it
     #   The from * import won't work!!!
     global SUNSET_TIME
+    global SUNSET_TIME_DYNAMIC_SET
+    SUNSET_TIME_DYNAMIC_SET = True
     with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'rb') as f:
         calcTimes = pickle.load(f)
         SUNSET_TIME = calcTimes['sunsetTime']
@@ -111,25 +216,32 @@ def getNightRange():
         nightTimeRange = pickle.load(f)
     return nightTimeRange
 
-def writeManualOverride(room=None, offset=None):
+def writeManualOverride(room=None, offset=None, action=''):
+    logger = getLogger()
     offset = offset if isinstance(offset, datetime.timedelta) else datetime.timedelta(hours=0)
     t=datetime.datetime.utcnow() + offset
     assert room is None or room in room_to_ips
     rooms = [room] if room is not None else list(room_to_ips.keys())
+    dct = {'time': t.strftime('%Y-%m-%d %H:%M:%S'), 'action':action }
     for rm in rooms:
+        logger.info(f"Writing to manualOverride for {rm} {action}")
         with open(MANUAL_OVERRIDE_PATH.format(room=rm), 'w+') as f:
-            f.write(t.strftime('%Y-%m-%d %H:%M:%S'))
+            f.write(json.dumps(dct))
+            f.truncate()
 
-def readManualOverride(room=None):
+def readManualOverride(room=None, returnDict=False):
     room = room or list(room_to_ips.keys())[0]
     if os.path.exists(MANUAL_OVERRIDE_PATH.format(room=room)):
         with open(MANUAL_OVERRIDE_PATH.format(room=room), 'r') as f:
-            return datetime.datetime.strptime(f.read().strip(), '%Y-%m-%d %H:%M:%S')
+            dct = json.loads(f.read())
+            dct['time'] = datetime.datetime.strptime(dct['time'], '%Y-%m-%d %H:%M:%S')
+            if returnDict:
+                return dct
+            else:
+                return dct['time']
     else:
-        fake_date = datetime.datetime.utcnow() - datetime.timedelta(days=1)
-        with open(MANUAL_OVERRIDE_PATH.format(room=room), 'w+') as f:
-            f.write(fake_date.strftime('%Y-%m-%d %H:%M:%S'))
-        return fake_date
+        writeManualOverride(room)
+        return readManualOverride(room)
 
 
 def set_IRL_sunset():
@@ -140,8 +252,12 @@ def set_IRL_sunset():
     import pytz
     import datetime
     logger=getLogger()
-    r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0')
-    assert r.status_code == 200
+    try:
+        r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0', verify=False, allow_redirects=False )
+        assert r.status_code == 200
+    except Exception:
+        logger.exception("Got error when getting sunrise-sunset data!")
+        return
     origDict = json.loads(r.text)['results']
     for key in origDict:
         if not isinstance(origDict[key], str) or not re.match(
@@ -196,9 +312,24 @@ def set_IRL_sunset():
     with open(os.path.join(HOMEDIR, 'calcTimes.pickle'), 'wb+') as f:
         pickle.dump({'sunsetTime': SUNSET_TIME}, f)
 
-#class Bulb(yeelight.Bulb):
-#    def __init__(self, *args, **kwargs):
-#        super(yeelight.Bulb, self).__init__(*args, **kwargs)
+
+Bulb = yeelight.Bulb # yeelight.aio.AsyncBulb
+
+
+class Bulb(yeelight.Bulb):
+    def __init__(self, *args, roomName='', **kwargs):
+        self.roomName = roomName
+        super().__init__(*args, **kwargs)
+
+    def __repr__(self):
+        return f'Bulb({self._ip}, room={self.roomName})'
+        #return super().__repr__()
+    def get_properties(self, requested_properties=yeelight.main.DEFAULT_PROPS, ssdp_fallback=False, forceCall=False):
+        if USE_GET_PROPERTIES or not self._last_properties or forceCall:
+            return super().get_properties(requested_properties, ssdp_fallback)
+        if any(rp not in self._last_properties for rp in requested_properties):
+            return self.get_properties(requested_properties, ssdp_fallback, forceCall=True)
+        return {rp: self._last_properties[rp] for rp in requested_properties}
 
 def retry(orig_func=None, max_attempts=3):
     def _decorate(func):
@@ -210,9 +341,15 @@ def retry(orig_func=None, max_attempts=3):
                 try:
                     res = func(*args, **kwargs)
                     break
+                except yeelight.BulbException as exc:
+                    e = exc
+                    logger.exception('Failed to execute %s on try %d:\n%s', func.__name__, attemptNum+1, ' '.join(exc.args))
+                    logger.error(str(args))
+                    logger.error(str(kwargs))
+                    time.sleep(1)
                 except Exception as exc:
                     e = exc
-                    logger.warn('Failed to execute %s on try %d\n%s', func.__name__, attemptNum+1, ' '.join(exc.args))
+                    logger.exception('Failed to execute %s on try %d:\n%s', func.__name__, attemptNum+1, ' '.join(exc.args))
                     time.sleep(1)
             else:
                 raise(e)
@@ -224,3 +361,23 @@ def retry(orig_func=None, max_attempts=3):
     return _decorate
 
 
+def applyFuncToBulbs(bulbs, func):
+    """
+    Apply func to bulbs, with special error handling to log which IP caused any exceptions
+    """
+    result = []
+    logger = getLogger(quiet=True)
+    for bulb in bulbs:
+        try:
+            result.append(func(bulb))
+        except Exception as e:
+            logger.error('Error from %s' % bulb._ip)
+            raise e
+
+    return result
+
+
+class EnvState(object):
+    def __init__(self):
+        self.phoneStatus = not bool(os.system("ping -c 1 -W 2 "+phoneIP))
+        self.pcStatus = not bool(os.system("ping -c 1 -W 2 "+pcIP))

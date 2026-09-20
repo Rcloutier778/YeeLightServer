@@ -89,12 +89,11 @@ def YeelightHTTP(event, cond, pipe):
         # Actions
         def do_POST(self):
             try:
+                logger.info("In POST http request")
                 self.data_string = self.rfile.read(int(self.headers['Content-Length']))
-                
-                
                 data = json.loads(self.data_string)
                 logger.info(data)
-                assert data['eventType'] in ('dashboard', 'manual')
+                assert data['eventType'] in ('dashboard', HTTP_EVENT_FROM_PC, 'zigbee', 'zigbeeSwitch')
                 if data['eventType'] == 'dashboard':
                     data['eventType'] += '-action'
                 assert data['newState'] in bulbCommands + ['color']
@@ -104,7 +103,7 @@ def YeelightHTTP(event, cond, pipe):
                 room = room or 'global'
                 assert room in list(room_to_ips) + ['global']
 
-                writeManualOverride(room if room != 'global' else None)
+                #writeManualOverride(room if room != 'global' else None)
 
                 pipe_data = {'room':room,
                     'action': data['newState'],
@@ -126,6 +125,7 @@ def YeelightHTTP(event, cond, pipe):
                 
             except Exception:
                 logger.exception("YeelightHTTP error")
+                logger.error(self.data_string)
                 self.send_response(500)
                 self.send_header('Content-type', 'json')
                 self.end_headers()
@@ -139,7 +139,7 @@ def http_server(event, cond, pipe):
     global logger
     logger = getLogger()
     setprocname('http_server')
-    HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.17'
+    HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.18'
     httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
     
     def cleanup(*args, **kwargs):
