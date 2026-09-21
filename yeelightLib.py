@@ -109,10 +109,10 @@ MANUAL_OVERRIDE_OFFSET = datetime.timedelta(hours=1)
 
 HTTP_EVENT_FROM_PC = 'manual'
 
-# Actually call get_properties if True. Otherwise, return _last_properties dict. 
-#   _last_properties is updated by normal calls to yeelight (turn on/off, color chagnes, etc)
-# This is used in Bulb class below
+# Actually call get_properties if True. Otherwise, use the cached _last_properties
+# for a short period. The TTL prevents external bulb changes from remaining invisible forever.
 USE_GET_PROPERTIES = False
+PROPERTY_CACHE_TTL = 2.0
 
 
 #formatter = logging.Formatter('%(asctime)s [pid %(process)d] [%(filename)s] %(levelname)s %(message)s')
@@ -319,41 +319,53 @@ Bulb = yeelight.Bulb # yeelight.aio.AsyncBulb
 class Bulb(yeelight.Bulb):
     def __init__(self, *args, roomName='', **kwargs):
         self.roomName = roomName
+        self._properties_cache_time = 0.0
         super().__init__(*args, **kwargs)
 
     def __repr__(self):
         return f'Bulb({self._ip}, room={self.roomName})'
         #return super().__repr__()
+
     def get_properties(self, requested_properties=yeelight.main.DEFAULT_PROPS, ssdp_fallback=False, forceCall=False):
-        if USE_GET_PROPERTIES or not self._last_properties or forceCall:
-            return super().get_properties(requested_properties, ssdp_fallback)
-        if any(rp not in self._last_properties for rp in requested_properties):
-            return self.get_properties(requested_properties, ssdp_fallback, forceCall=True)
+        cache_expired = (time.monotonic() - self._properties_cache_time) >= PROPERTY_CACHE_TTL
+        needs_refresh = (
+            USE_GET_PROPERTIES
+            or not self._last_properties
+            or forceCall
+            or cache_expired
+            or any(rp not in self._last_properties for rp in requested_properties)
+        )
+        if needs_refresh:
+            result = super().get_properties(requested_properties, ssdp_fallback)
+            self._properties_cache_time = time.monotonic()
+            return result
         return {rp: self._last_properties[rp] for rp in requested_properties}
+
+
+# Retry only errors that plausibly represent transient device/network conditions.
+# Programming errors such as TypeError, KeyError, or AttributeError must surface immediately.
+RETRYABLE_EXCEPTIONS = (yeelight.BulbException, ConnectionError, TimeoutError)
 
 def retry(orig_func=None, max_attempts=3):
     def _decorate(func):
         @wraps(func)
         def retry_wrapper(*args, **kwargs):
             logger = getLogger(quiet=True)
-            e = None
+            last_error = None
             for attemptNum in range(max_attempts):
                 try:
-                    res = func(*args, **kwargs)
-                    break
-                except yeelight.BulbException as exc:
-                    e = exc
-                    logger.exception('Failed to execute %s on try %d:\n%s', func.__name__, attemptNum+1, ' '.join(exc.args))
+                    return func(*args, **kwargs)
+                except RETRYABLE_EXCEPTIONS as exc:
+                    last_error = exc
+                    logger.exception(
+                        'Failed to execute %s on try %d/%d: %s',
+                        func.__name__, attemptNum + 1, max_attempts, str(exc)
+                    )
                     logger.error(str(args))
                     logger.error(str(kwargs))
-                    time.sleep(1)
-                except Exception as exc:
-                    e = exc
-                    logger.exception('Failed to execute %s on try %d:\n%s', func.__name__, attemptNum+1, ' '.join(exc.args))
-                    time.sleep(1)
-            else:
-                raise(e)
-            return res
+                    if attemptNum + 1 < max_attempts:
+                        time.sleep(1)
+            raise last_error
         return retry_wrapper
     if orig_func:
         return _decorate(orig_func)

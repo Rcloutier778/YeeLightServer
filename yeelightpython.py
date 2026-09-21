@@ -108,25 +108,30 @@ def main():
 
 
 def rebuild_bulbs():
-    "Rebuild the bulb list."
+    """Discover configured Yeelights once, then share the result with every room."""
+    discovered = sorted({
+        bulb['ip']
+        for bulb in yeelight.discover_bulbs(3)
+        if bulb.get('ip') in BULB_IPS
+    })
+
     if YEELIGHT_ROOM_HANDLES_REBUILD:
         for room in ROOMS.values():
-            room.rebuild_bulbs()
+            room.rebuild_bulbs(discovered_bulb_ips=discovered)
     else:
         global bulbs
-        found_bulbs_ip = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(1))
         current_bulbs_ips = sorted(bulb._ip for bulb in bulbs)
-        if current_bulbs_ips != found_bulbs_ip:
-            new_ips = set(found_bulbs_ip) - set(current_bulbs_ips)
-            missing_ips = set(current_bulbs_ips) - set(found_bulbs_ip)
+        if current_bulbs_ips != discovered:
+            new_ips = set(discovered) - set(current_bulbs_ips)
+            missing_ips = set(current_bulbs_ips) - set(discovered)
             for new_ip in new_ips:
                 logger.info('Found new bulb at ip addr: %s', new_ip)
             for missing_ip in missing_ips:
                 logger.info('Missing bulb at ip addr: %s', missing_ip)
-                
-            bulbs = [Bulb(found_ip) for found_ip in found_bulbs_ip]
+
+            bulbs = [Bulb(found_ip) for found_ip in discovered]
             for room in ROOMS.values():
-                room.rebuild_bulbs()
+                room.rebuild_bulbs(discovered_bulb_ips=discovered)
 
 
 def websocketTest(pipe):
@@ -187,7 +192,11 @@ class Server(object):
         self.ping_event = mp.Event()
         self.ping_pipe, ping_child_pipe = mp.Pipe()
         self.check_ping_proc = mp.Process(target=checkPingThreaded, args=(self.ping_event, ping_child_pipe, self.wake_condition, self.envState.pcStatus, self.envState.phoneStatus,))
-        self.ping_res = True
+        self.ping_res = None
+        self.ping_results = []
+        self.switch_requests = []
+        self.http_requests = []
+        self.bulb_wake = False
         self.timer_wake = False
 
 
@@ -244,46 +253,44 @@ class Server(object):
         return self.ping_event.is_set() or self.bulb_event.is_set() or self.switch_event.is_set() or self.http_event.is_set()
     
     def resolve_wake(self):
-        """
-        Resolve whatever event woke the main thread
-        :return:
-        """
+        """Collect all currently pending event payloads without dropping bursts."""
         logger.info("Resolving wake")
-        if self.bulb_event.is_set():
+        self.ping_results = []
+        self.switch_requests = []
+        self.http_requests = []
+        self.bulb_wake = self.bulb_event.is_set()
+
+        if self.bulb_wake:
             logger.info("Resolving bulb event")
-            #logger.critical("Skipping bulb wake event")
-            rebuild_bulbs()
             self.bulb_event.clear()
+
         if self.ping_event.is_set():
             logger.info("Resolving ping event")
-            self.timer_wake = False
-            phoneStatus, pcStatus, self.ping_res = self.ping_pipe.recv()
-            self.envState.phoneStatus = phoneStatus
-            self.envState.pcStatus = pcStatus
+            while self.ping_pipe.poll():
+                self.ping_results.append(self.ping_pipe.recv())
             self.ping_event.clear()
+
         if self.switch_event.is_set():
             logger.info("Resolving switch event")
-            self.switch_room, self.switch_action = self.switch_pipe.recv()
+            # The switch child waits for an acknowledgement before sending the next
+            # request. Acknowledge each request rather than discarding later payloads.
+            while self.switch_pipe.poll():
+                request = self.switch_pipe.recv()
+                self.switch_requests.append(request)
+                self.switch_pipe.send(0)
             self.switch_event.clear()
-            self.switch_pipe.send(0)
-            os.system('''sudo sh -c "echo -e '\a' > /dev/console"''')
-            self.websocket_pipe.send((self.switch_room, self.switch_action))
-            # Ensure pipe is empty
-            while True:
-                if self.switch_pipe.poll():
-                    logger.warn("Found extra items in pipe!: %s", str( self.switch_pipe.recv() ) )
-                else:
-                    break
-
             
-            # switch proc did not get the ack from us and has sent a still_alive request
-            if self.switch_room == '' and self.switch_action is None:
-                self.switch_room = None
+            # Have server beep
+            os.system("sudo sh -c \"echo -e '\\a' > /dev/console\"")
+            for switch_room, switch_action in self.switch_requests:
+                self.websocket_pipe.send((switch_room, switch_action))
+
         if self.http_event.is_set():
             logger.info("Resolving http event")
-            self.http_res = self.http_pipe.recv()
+            while self.http_pipe.poll():
+                self.http_requests.append(self.http_pipe.recv())
             self.http_event.clear()
-    
+
     def run(self):
         """
         Runs the server
@@ -311,103 +318,145 @@ class Server(object):
                 self.switch_room, self.switch_action = None, None
                 self.http_res = None
                 self.ping_res = None
+                self.ping_results = []
+                self.switch_requests = []
+                self.http_requests = []
+                self.bulb_wake = False
                 with self.wake_condition:
                     self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
                     if self.wake_predicate():
                         self.resolve_wake()
                 logger.info("Woke up")
-                if self.ping_res is not None:
-                    if self.ping_res:
+                event_processed = bool(
+                    self.bulb_wake or self.ping_results or self.switch_requests or self.http_requests
+                )
+
+                if self.bulb_wake:
+                    try:
+                        rebuild_bulbs()
+                    except Exception:
+                        logger.exception('Exception while rebuilding bulbs from wake event')
+
+                for phoneStatus, pcStatus, ping_res in self.ping_results:
+                    self.timer_wake = False
+                    self.envState.phoneStatus = phoneStatus
+                    self.envState.pcStatus = pcStatus
+                    self.ping_res = ping_res
+                    if ping_res:
                         global_action('on')
                         global_action('autoset', force=True)
                         writeManualOverride()
                         global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
                     else:
                         # Temp fix for PC not having a valid IP address on waking from sleep.
-                        sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p')
-                        if datetime.datetime.now().time() >= sunrise_time.time() and datetime.datetime.now().time() <= (sunrise_time + datetime.timedelta(hours=1)).time():
-                            continue
-                        global_action('off', force=True)
-                        writeManualOverride(offset=datetime.timedelta(days=30))
-                        global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
-                if self.switch_room:
-                    if self.switch_room == SWITCH_RESTART_KEYWORD:
-                        logger.info("Got restart request from switch handler")
+                        sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p').time()
+                        now_time = datetime.datetime.now().time()
+                        sunrise_end = (
+                            datetime.datetime.combine(datetime.date.today(), sunrise_time)
+                            + datetime.timedelta(hours=1)
+                        ).time()
+                        if not (sunrise_time <= now_time <= sunrise_end):
+                            global_action('off', force=True)
+                            writeManualOverride(offset=datetime.timedelta(days=30))
+                            global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
 
+                for switch_room, switch_action in self.switch_requests:
+                    if switch_room == SWITCH_RESTART_KEYWORD:
+                        logger.info("Got restart request from switch handler")
                         self.monitor_switches_proc.kill()
                         self.switch_pipe.close()
                         self.switch_event = mp.Event()
                         self.switch_pipe, switch_child_pipe = mp.Pipe()
-                        self.monitor_switches_proc = mp.Process(target=monitor_switches, args=(self.switch_event, self.wake_condition, switch_child_pipe, ))
-                        self.switch_room = None
-                        self.switch_action = None
+                        self.monitor_switches_proc = mp.Process(
+                            target=monitor_switches,
+                            args=(self.switch_event, self.wake_condition, switch_child_pipe),
+                        )
                         self.monitor_switches_proc.start()
                         continue
-                    if self.switch_room not in ROOMS:
-                        logger.error('Received %s from switch_room, which is not in %s', self.switch_room, ', '.join(ROOMS))
+                    if switch_room == '' and switch_action is None:
                         continue
-                    logger.info('Switch in %s hit for %s', self.switch_room, self.switch_action)
-                    kwargs = {'autosetDuration': SWITCH_FLOW_DURATION, 'force':True, 'forceLight':True} if self.switch_action == 'autoset' else {}
-                    if self.switch_action in COMMANDS_WITH_DURATION:
-                        kwargs['duration'] = SWITCH_FLOW_DURATION
-                    getattr(ROOMS[self.switch_room], self.switch_action)(**kwargs)
-                    writeManualOverride(
-                        self.switch_room,
-                        datetime.timedelta(hours=2),
-                        action='MANUAL_AUTOSET_FORCE_LIGHT' if self.switch_action == 'autoset' else self.switch_action
+                    if switch_room not in ROOMS:
+                        logger.error(
+                            'Received %s from switch_room, which is not in %s',
+                            switch_room, ', '.join(ROOMS)
+                        )
+                        continue
+
+                    logger.info('Switch in %s hit for %s', switch_room, switch_action)
+                    kwargs = (
+                        {'autosetDuration': SWITCH_FLOW_DURATION, 'force': True, 'forceLight': True}
+                        if switch_action == 'autoset' else {}
                     )
-                if self.http_res is not None:
+                    if switch_action in COMMANDS_WITH_DURATION:
+                        kwargs['duration'] = SWITCH_FLOW_DURATION
+                    getattr(ROOMS[switch_room], switch_action)(**kwargs)
+                    writeManualOverride(
+                        switch_room,
+                        datetime.timedelta(hours=2),
+                        action=('MANUAL_AUTOSET_FORCE_LIGHT' if switch_action == 'autoset' else switch_action)
+                    )
+
+                for http_res in self.http_requests:
                     logger.info('http')
-                    logger.info(self.http_res)
-                    if self.http_res['eventType'] == HTTP_EVENT_FROM_PC:
-                        global_action('writeState',self.http_res["action"])
+                    logger.info(http_res)
+                    if http_res['eventType'] == HTTP_EVENT_FROM_PC:
+                        global_action('writeState', http_res["action"])
                         if not SERVER_ACTS_NOT_CLIENT:
                             logger.info('Manual http event, no further action taken')
                             continue
-                    if self.http_res['eventType'] in ('dashboard-action', 'zigbee', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and self.http_res['eventType'] == HTTP_EVENT_FROM_PC):
-                        if self.http_res['action'] not in bulbCommands:
-                            logger.error('Received %s as a command, which is not a valid command!' % self.http_res['action'])
+                    if http_res['eventType'] in ('dashboard-action', 'zigbee', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and http_res['eventType'] == HTTP_EVENT_FROM_PC):
+                        if http_res['action'] not in bulbCommands:
+                            logger.error('Received %s as a command, which is not a valid command!', http_res['action'])
                             continue
-                        if self.http_res['action'] in COMMANDS_WITH_DURATION:
-                            self.http_res['kwargs']['duration'] = SWITCH_FLOW_DURATION
-                        if self.http_res['action'] == 'autoset':
-                            self.http_res['kwargs']['force'] = True
-                            self.http_res['kwargs']['autosetDuration'] = 3000
-                            if self.http_res['eventType'] == 'zigbeeSwitch':
-                                self.http_res['kwargs']['forceLight'] = True
-                                self.http_res['kwargs']['autosetDuration'] = SWITCH_FLOW_DURATION
-                        if self.http_res['room'] == 'global':
+                        if http_res['action'] in COMMANDS_WITH_DURATION:
+                            http_res['kwargs']['duration'] = SWITCH_FLOW_DURATION
+                        if http_res['action'] == 'autoset':
+                            http_res['kwargs']['force'] = True
+                            http_res['kwargs']['autosetDuration'] = 3000
+                            if http_res['eventType'] == 'zigbeeSwitch':
+                                http_res['kwargs']['forceLight'] = True
+                                http_res['kwargs']['autosetDuration'] = SWITCH_FLOW_DURATION
+                        if http_res['room'] == 'global':
                             logger.info('global http')
-                            global_action(self.http_res['action'], **self.http_res['kwargs'])
-                        else:
+                            global_action(http_res['action'], **http_res['kwargs'])
+                        elif http_res['room'] in ROOMS:
                             logger.info('Room level http')
-                            getattr(ROOMS[self.http_res['room']], self.http_res['action'])(**self.http_res['kwargs'])
+                            getattr(ROOMS[http_res['room']], http_res['action'])(**http_res['kwargs'])
+                        else:
+                            logger.error('Received unknown HTTP room %s', http_res['room'])
+                            continue
 
-                        if self.http_res['eventType'] in ('dashboard-action', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and self.http_res['eventType'] == HTTP_EVENT_FROM_PC):
+                        if http_res['eventType'] in ('dashboard-action', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and http_res['eventType'] == HTTP_EVENT_FROM_PC):
                             writeManualOverride(
-                                self.http_res['room'] if self.http_res['room'] != 'global' else None,
+                                http_res['room'] if http_res['room'] != 'global' else None,
                                 datetime.timedelta(hours=2),
-                                action=('MANUAL_AUTOSET_FORCE_LIGHT' if self.http_res['action'] == 'autoset' else self.http_res['action'])
+                                action=('MANUAL_AUTOSET_FORCE_LIGHT' if http_res['action'] == 'autoset' else http_res['action'])
                             )
-                    elif self.http_res['eventType'] == 'dashboard-query':
+                    elif http_res['eventType'] == 'dashboard-query':
                         logger.info('dashboard-query')
-                        if self.http_res['query'] == 'getProperty':
+                        if http_res['query'] == 'getProperty':
                             logger.info('getProperty')
-                            room_name = self.http_res['room']
+                            room_name = http_res['room']
                             if room_name not in ROOMS:
-                                raise ValueError('Unknown room: %s' % room_name)
+                                logger.error('Unknown room: %s', room_name)
+                                self.http_pipe.send({})
+                                continue
 
                             tmp_bulbs = ROOMS[room_name].bulbs
                             if tmp_bulbs:
-                                properties = list(self.http_res.get('properties', ()))
+                                properties = list(http_res.get('properties', ()))
                                 self.http_pipe.send(tmp_bulbs[0].get_properties(properties))
                             else:
                                 self.http_pipe.send({})
-                if self.ping_res is None and self.switch_room is None and self.http_res is None:
+
+                if not event_processed:
+                    self.ping_res = None
+                    self.switch_room, self.switch_action = None, None
+                    self.http_res = None
                     logger.info('Timer wake')
-                    if not ( self.envState.phoneStatus and self.envState.pcStatus ):
+                    if not (self.envState.phoneStatus and self.envState.pcStatus):
                         logger.info("Phone(%s) and/or pc(%s) is offline, keeping lights off.", str(self.envState.phoneStatus), str(self.envState.pcStatus))
-                        global_action('off', auto=True)#, autoset_auto_var = not self.timer_wake)
+                        global_action('off', auto=True)
                     else:
                         global_action('autoset', AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
 

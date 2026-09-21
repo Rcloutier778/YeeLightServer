@@ -112,25 +112,28 @@ class Room:
         self.rebuild_bulbs()
 
 
-    def rebuild_bulbs(self):
-        found_bulb_ips = sorted(bulb['ip'] for bulb in yeelight.discover_bulbs(3) if bulb['ip'] in room_to_ips[self.name] )
+    def rebuild_bulbs(self, discovered_bulb_ips=None):
+        """Rebuild the room bulb list from an optional shared discovery result."""
+        if discovered_bulb_ips is None:
+            discovered_bulb_ips = [b['ip'] for b in yeelight.discover_bulbs(3)]
+        found_bulb_ips = sorted(set(discovered_bulb_ips) & set(room_to_ips[self.name]))
         current_bulb_ips = sorted(bulb._ip for bulb in self.bulbs)
         if current_bulb_ips != found_bulb_ips:
             logger.info('Different bulbs!')
             logger.info('Found bulbs: %s', ', '.join(found_bulb_ips))
 
-            # Clear out the bulbs, since they don't like having multiple 
-            #   connections to the same machine. 
-            del self.bulbs[:]
-
             if YEELIGHT_STATIC_REBUILD:
                 logger.info('Statically rebuilding bulb list')
-                self.bulbs = [Bulb(ip, roomName=self.name) for ip in room_to_ips[self.name] ]
+                new_bulbs = [Bulb(ip, roomName=self.name) for ip in room_to_ips[self.name]]
             else:
                 if YEELIGHT_USE_SAFE_BULBS:
                     logger.info("Adding Safe bulbs")
-                    found_bulb_ips = list(set(found_bulb_ips) | safe_room_to_ips[self.name])
-                self.bulbs = [Bulb(found_ip, roomName=self.name) for found_ip in found_bulb_ips]
+                    found_bulb_ips = list(set(found_bulb_ips) | set(safe_room_to_ips[self.name]))
+                new_bulbs = [Bulb(found_ip, roomName=self.name) for found_ip in found_bulb_ips]
+
+            # Construct the replacement list before swapping it into the room so a
+            # discovery/constructor failure cannot leave the room with an empty list.
+            self.bulbs = new_bulbs
             try:
                 self.resetFromLoggedState(include_IP_states=False)
                 return #TODO
@@ -281,7 +284,7 @@ class Room:
                 self.customTempFlow(int(temperature), brightness=int(brightness))
 
 
-    def applyFuncAndRebuild(self, func, selectBulbIps=[]):
+    def applyFuncAndRebuild(self, func, selectBulbIps=None):
         """
         Loop through the bulbs in self.bulbs, apply func to each
         If it encounters an error, rebuild the error bulb only.
@@ -297,7 +300,7 @@ class Room:
                 if bulb is None:
                     tempBulbs.append(None)
                     continue
-                if selectBulbIps and bulb._ip not in selectBulbIps:
+                if selectBulbIps is not None and bulb._ip not in selectBulbIps:
                     tempBulbs.append(None)
                     continue
                 try:
@@ -364,25 +367,41 @@ class Room:
         self.colorTempFlow(temperature, duration, brightness)
 
     def _onoff(self, f, writeState=True):
-        # To reduce the input delay between pressing the button and actually performing the action,
-        #   Perform on all, then begin the loop for ones that haven't changed after the first blast.
-        #   Then write state
-        assert f in ('on','off')
-        #logger.info('in _onoff') #TODO
-        # ~215 ms, 246
+        # Send the first command to every bulb immediately, then verify with bounded
+        # retries. A short backoff avoids a tight network-polling loop when a bulb is
+        # slow or temporarily unreachable.
+        assert f in ('on', 'off')
         self.applyFuncAndRebuild(lambda i: i.turn_off() if f == 'off' else i.turn_on())
-        #logger.info("After applyFunc") #TODO
 
-        while True:
-            # ~122 ms, 9 ms
-            applyFuncRes = self.applyFuncAndRebuild(lambda x: x.get_properties(['power'])['power'] == f)
-            #logger.info("After loop applyfunc") # TODO
-            if all(applyFuncRes):
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            states = self.applyFuncAndRebuild(
+                lambda x: (x._ip, x.get_properties(['power'])['power'])
+            )
+            state_by_ip = dict(states)
+            active_ips = {bulb._ip for bulb in self.bulbs}
+
+            if active_ips and len(state_by_ip) == len(active_ips) and all(
+                state_by_ip.get(ip) == f for ip in active_ips
+            ):
                 break
-            for i in [x for x in self.bulbs if x.get_properties(['power'])['power'] != f ]:
-                i.turn_off() if f == 'off' else i.turn_on()
-            #logger.info("After additional onoff for loop") #TODO
- 
+
+            if attempt + 1 >= max_attempts:
+                raise RuntimeError(
+                    'Failed to set all bulbs to power=%s after %d verification attempts'
+                    % (f, max_attempts)
+                )
+
+            mismatched_ips = {
+                ip for ip in active_ips
+                if state_by_ip.get(ip) != f
+            }
+            time.sleep(min(0.5, 0.1 * (2 ** attempt)))
+            self.applyFuncAndRebuild(
+                lambda i: i.turn_off() if f == 'off' else i.turn_on(),
+                selectBulbIps=mismatched_ips,
+            )
+
         if writeState:
             self.writeState(f)
 
