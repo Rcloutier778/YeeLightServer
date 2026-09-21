@@ -1,7 +1,7 @@
 import os
 import time
 
-from yeelightLib import getLogger, phoneIP, pcIP, setprocname
+from yeelightLib import getLogger, phoneIP, pcIP, setprocname, getPingStatus
 
 logger = getLogger()
 
@@ -40,8 +40,8 @@ def checkPing(pcStatus, phoneStatus):
     attempts = 0
     while True:
         time.sleep(sleepTime)
-        phone_response = not bool(os.system("ping -c 1 -W 2 " + phoneIP))
-        pc_response = not bool(os.system("ping -c 1 -W 2 " + pcIP))
+        phone_response = getPingStatus(phoneIP)
+        pc_response = getPingStatus(pcIP)
         if (phone_response == phoneStatus) and (pc_response == pcStatus):  # no changes
             attempts = 0
             continue

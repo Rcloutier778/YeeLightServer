@@ -389,7 +389,10 @@ def applyFuncToBulbs(bulbs, func):
     return result
 
 
+def getPingStatus(ip_addr):
+    return not bool(os.system("ping -c 1 -W 2 "+ip_addr))
+
 class EnvState(object):
     def __init__(self):
-        self.phoneStatus = not bool(os.system("ping -c 1 -W 2 "+phoneIP))
-        self.pcStatus = not bool(os.system("ping -c 1 -W 2 "+pcIP))
+        self.phoneStatus = getPingStatus(phoneIP)
+        self.pcStatus = getPingStatus(pcIP)
