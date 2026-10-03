@@ -53,7 +53,7 @@ class FakeRoom:
         self.calls = []
         self.influx_client = types.SimpleNamespace(close=lambda: self.calls.append(("close",)))
     def resetFromLoggedState(self, *args, **kwargs): self.calls.append(("reset", args, kwargs))
-    def rebuild_bulbs(self): self.calls.append(("rebuild",))
+    def rebuild_bulbs(self, **kwargs): self.calls.append(("rebuild", kwargs))
     def graceful_kill(self): self.calls.append(("kill",))
     def __getattr__(self, name):
         def action(*args, **kwargs): self.calls.append((name, args, kwargs))
@@ -110,9 +110,11 @@ def test_rebuild_bulbs_both_modes(monkeypatch):
 
     app.YEELIGHT_ROOM_HANDLES_REBUILD = False
     app.bulbs = [types.SimpleNamespace(_ip="old")]
-    monkeypatch.setattr(app.yeelight, "discover_bulbs", lambda *_: [{"ip": "new"}])
+    new_ip = "10.0.0.15"
+    monkeypatch.setattr(app, "BULB_IPS", [new_ip])
+    monkeypatch.setattr(app.yeelight, "discover_bulbs", lambda *_: [{"ip": new_ip}])
     app.rebuild_bulbs()
-    assert [b._ip for b in app.bulbs] == ["new"]
+    assert [b._ip for b in app.bulbs] == [new_ip]
 
 
 def test_websocket_test_sends_json_and_fallback(monkeypatch):
@@ -182,32 +184,51 @@ def make_server_shell(app):
 def test_server_wake_predicate_and_resolve(monkeypatch):
     app = import_app(monkeypatch)
     s = make_server_shell(app)
-    s.ping_event.set(); s.ping_pipe.recv_value = (False, True, True)
+    class PingPipe(Pipe):
+        def __init__(self):
+            super().__init__((False, True, True))
+            self._used = False
+        def poll(self, *args):
+            return not self._used
+        def recv(self):
+            self._used = True
+            return self.recv_value
+    s.ping_event.set(); s.ping_pipe = PingPipe()
     assert s.wake_predicate() is True
     s.resolve_wake()
-    assert s.envState.phoneStatus is False
+    assert s.ping_results == [(False, True, True)]
+    assert s.envState.phoneStatus is True
     assert s.envState.pcStatus is True
     s.ping_event.clear()
 
     s.bulb_event.set()
-    monkeypatch.setattr(app, "rebuild_bulbs", lambda: setattr(s, "rebuilt", True))
     s.resolve_wake()
-    assert s.rebuilt is True
+    assert s.bulb_wake is True
+    assert s.bulb_event.is_set() is False
 
+    class RequestPipe(Pipe):
+        def __init__(self, value):
+            super().__init__(value)
+            self._used = False
+        def poll(self, *args):
+            return not self._used
+        def recv(self):
+            self._used = True
+            return self.recv_value
     s.switch_event.set()
-    s.switch_pipe.recv_value = ("LivingRoom", "day")
+    s.switch_pipe = RequestPipe(("LivingRoom", "day"))
     monkeypatch.setattr(app.os, "system", lambda _: 0)
     s.resolve_wake()
-    assert s.switch_room == "LivingRoom"
+    assert s.switch_requests == [("LivingRoom", "day")]
     assert s.switch_pipe.sent[-1] == 0
 
-    s.switch_event.set(); s.switch_pipe.recv_value = ("", None)
+    s.switch_event.set(); s.switch_pipe = RequestPipe(("", None))
     s.resolve_wake()
-    assert s.switch_room is None
+    assert s.switch_requests == [("", None)]
 
-    s.http_event.set(); s.http_pipe.recv_value = {"room": "global", "action": "day", "eventType": "dashboard-action"}
+    s.http_event.set(); s.http_pipe = RequestPipe({"room": "global", "action": "day", "eventType": "dashboard-action"})
     s.resolve_wake()
-    assert s.http_res["action"] == "day"
+    assert s.http_requests[0]["action"] == "day"
 
 
 def test_server_init(monkeypatch):

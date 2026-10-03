@@ -133,6 +133,7 @@ def test_set_irl_sunset_success_and_failure(monkeypatch, tmp_path):
 def test_bulb_repr_and_cached_properties(monkeypatch):
     bulb = lib.Bulb("10.0.0.1", roomName="Kitchen")
     bulb._last_properties = {"power": "on", "bright": "50", "ct": "4000"}
+    bulb._properties_cache_time = lib.time.monotonic()
     assert repr(bulb) == "Bulb(10.0.0.1, room=Kitchen)"
     monkeypatch.setattr(lib, "USE_GET_PROPERTIES", False)
     assert bulb.get_properties(["power", "ct"]) == {"power": "on", "ct": "4000"}

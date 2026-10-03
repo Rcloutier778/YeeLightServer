@@ -96,31 +96,37 @@ def test_monitor_advert_bulbs(monkeypatch):
         def bind(self,*a): pass
         def recv(self,*a):
             self.i += 1
-            if self.i == 1: return b"NOT DISCOVER"
-            self.blocked.wait()
-            return b"ssdp:discover"
+            if self.i == 1:
+                return b"NOT AN ADVERTISEMENT"
+            return (b"NOTIFY * HTTP/1.1\r\n"
+                    b"Location: yeelight://10.0.0.15:55443\r\n"
+                    b"model: color2\r\n")
     monkeypatch.setattr(bulb_events, "setprocname", lambda x: None)
-    monkeypatch.setattr(bulb_events.socket, "socket", lambda *a: Sock(blocked_holder[0]))
+    monkeypatch.setattr(bulb_events.socket, "socket", lambda *a: Sock(threading.Event()))
     monkeypatch.setattr(bulb_events.struct, "pack", lambda *a: b"")
     monkeypatch.setattr(bulb_events, "logger", LoggerStub())
-    blocked_holder=[threading.Event()]
     def runner(): return bulb_events.monitor_advert_bulbs(event, Cond())
     thread=threading.Thread(target=runner, daemon=True); thread.start()
-    real_sleep(0.05)
+    for _ in range(20):
+        if event.value:
+            break
+        real_sleep(0.01)
     assert event.value
-
 
 def test_monitor_bulb_static_detects_change(monkeypatch):
     event=Event(); blocked=threading.Event()
-    seq = [[{"ip":"a"}], [{"ip":"b"}], [{"ip":"b"}], [{"ip":"b"}], [{"ip":"b"}]]
-    monkeypatch.setattr(bulb_events.yeelight, "discover_bulbs", lambda *args: seq.pop(0) if seq else [{"ip":"b"}])
+    ips = [bulb_events.BULB_IPS[0]]
+    seq = [[{"ip": ips[0]}], [{"ip":"unexpected"}], [{"ip":"unexpected"}], [{"ip":"unexpected"}], [{"ip":"unexpected"}]]
+    monkeypatch.setattr(bulb_events.yeelight, "discover_bulbs", lambda *args: seq.pop(0) if seq else [{"ip":"unexpected"}])
     monkeypatch.setattr(bulb_events.time, "sleep", lambda _: blocked.wait())
     monkeypatch.setattr(bulb_events, "setprocname", lambda x: None)
     monkeypatch.setattr(bulb_events, "logger", LoggerStub())
     thread=threading.Thread(target=bulb_events.monitor_bulb_static, args=(event, Cond()), daemon=True); thread.start()
-    real_sleep(0.05)
+    for _ in range(20):
+        if event.value:
+            break
+        real_sleep(0.01)
     assert event.value
-
 
 def test_monitor_ping_and_bulb_ping(monkeypatch):
     event=Event(); blocked=threading.Event()

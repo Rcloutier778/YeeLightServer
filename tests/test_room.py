@@ -383,6 +383,23 @@ def test_autoset_manual_override_cancellation_and_phone_requirement(monkeypatch,
     assert obj.autoset(force=False, autoset_auto_var=True) == -1
 
 
+def test_return_from_away_holds_lights_against_timer_off(monkeypatch, tmp_path):
+    obj = make_room(tmp_path, [FakeBulb("1", power="on")])
+    obj._getLastState = lambda: {"state": "off", "phoneStatus": False}
+    lib = __import__("yeelightLib")
+    monkeypatch.setattr(lib, "MANUAL_OVERRIDE_PATH", str(tmp_path / "{room}" / "manualOverride.json"))
+    monkeypatch.setattr(lib, "room_to_ips", {"LivingRoom": ["1"]})
+    monkeypatch.setattr(room, "room_to_ips", {"LivingRoom": ["1"]})
+    (tmp_path / "LivingRoom").mkdir()
+    monkeypatch.setattr(obj, "autoset", lambda **kwargs: 0)
+
+    obj.returnFromAway()
+
+    assert json.loads((tmp_path / "LivingRoom" / "manualOverride.json").read_text())["action"] == "returnFromAway"
+    assert obj.off(auto=True) == -1
+    assert obj.bulbs[0].properties["power"] == "on"
+
+
 def test_sunrise_and_return_from_away(monkeypatch, tmp_path):
     obj = make_room(tmp_path, [FakeBulb("1"), FakeBulb("2")])
     monkeypatch.setattr(room, "writeManualOverride", lambda **kwargs: None)

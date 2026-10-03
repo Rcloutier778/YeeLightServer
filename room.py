@@ -727,8 +727,14 @@ class Room:
 
 
     def returnFromAway(self):
-        """
-        For when some motion detector activates at the front door
+        """Restore lighting after the front-door motion sensor detects arrival.
+
+        The phone/PC presence state can remain ``False`` for a short time after
+        arrival (or remain unavailable entirely).  The server's five-minute timer
+        otherwise sees that offline state and calls ``off(auto=True)``, undoing
+        the lighting change made here.  Create a temporary manual override after
+        a successful return so that timer-driven presence enforcement cannot
+        immediately turn the lights back off.
         """
         jdict = self._getLastState()
         logger.info("In returnFromAway")
@@ -736,4 +742,9 @@ class Room:
         if jdict['state'] == 'off' and not jdict['phoneStatus']:
             logger.info("setting lights from returnFromAway")
             self.autoset(autosetDuration=1, force=True)
+            writeManualOverride(
+                room=self.name,
+                offset=datetime.timedelta(hours=2),
+                action='returnFromAway',
+            )
 
