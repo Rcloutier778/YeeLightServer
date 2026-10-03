@@ -496,7 +496,7 @@ def global_action(action, *args, **kwargs):
                 break
             except Exception as e:
                 ex = e
-                logger.exception('Failed to execute %s on try %d for %s\n%s\nargs:%s\nkwargs:%s', action, attempt+1, room.name, ' '.join(e.args), ', '.join(str(x) for x in args), kwargs)
+                logger.exception('Failed to execute %s on try %d for %s\n%s\nargs:%s\nkwargs:%s', action, attempt+1, room.name, str(e), ', '.join(str(x) for x in args), kwargs)
         else:
             raise ex
         

@@ -143,7 +143,6 @@ def test_write_state_persists_and_skips_hidden_and_duplicate(monkeypatch, tmp_pa
     obj.room_dir = str(tmp_path / "room")
     obj.roomStatePath = str(tmp_path / "room" / "state")
     obj.influx_writer = FakeInflux()
-    monkeypatch.setattr(room.inspect, "stack", lambda: [None, None, types.SimpleNamespace(function="test")])
     monkeypatch.setattr(room, "getLogger", lambda quiet=False: room.logger)
 
     obj.writeState("day")
@@ -155,6 +154,8 @@ def test_write_state_persists_and_skips_hidden_and_duplicate(monkeypatch, tmp_pa
     assert len(obj.influx_writer.calls) == count
     obj.writeState("rebuild_bulbs")
     assert obj.state == "day"
+    obj.writeState("day", source="autoset")
+    assert any("autoset (day)" in str(call) for call in room.bulbLog.calls)
 
 
 def test_write_state_custom_and_onoff(monkeypatch, tmp_path):
@@ -239,6 +240,19 @@ def test_simple_light_commands(monkeypatch, tmp_path):
     assert obj.bulbs[0].properties["bright"] == "25"
     obj.day(); obj.dusk(); obj.night(); obj.sleep(); obj.customTempFlow(3100, brightness=45)
     assert obj.state == "on"
+
+
+def test_manual_lighting_command_from_off_runs_autoset(monkeypatch, tmp_path):
+    obj = make_room(tmp_path, [FakeBulb("1", power="off")])
+    autoset_calls = []
+    monkeypatch.setattr(obj, "autoset", lambda **kwargs: autoset_calls.append(kwargs) or 0)
+    monkeypatch.setattr(obj, "writeState", lambda state: setattr(obj, "state", state))
+    monkeypatch.setattr(obj, "colorTempFlow", lambda *args: None)
+
+    obj.night()
+
+    assert obj.bulbs[0].properties["power"] == "on"
+    assert autoset_calls == [{"autosetDuration": 1, "force": True, "forceLight": True, "_from_on": True}]
 
 
 def test_onoff_off_on_toggle_and_rgb(monkeypatch, tmp_path):

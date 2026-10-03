@@ -253,7 +253,7 @@ def set_IRL_sunset():
     import datetime
     logger=getLogger()
     try:
-        r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0', verify=False, allow_redirects=False )
+        r = requests.post('https://api.sunrise-sunset.org/json?lat=40.739589&lng=-74.035677&formatted=0', verify=False, allow_redirects=False, timeout=10)
         assert r.status_code == 200
     except Exception:
         logger.exception("Got error when getting sunrise-sunset data!")

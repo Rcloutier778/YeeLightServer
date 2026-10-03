@@ -1,10 +1,10 @@
 from yeelightLib import *
+import yeelightLib as yeelight_lib
 
 from functools import wraps
 import json
 import platform
 import time
-import inspect
 import yeelight
 import asyncio
 import threading
@@ -145,7 +145,7 @@ class Room:
                 logger.info(current_bulb_ips)
                 logger.exception('Got exception when restting bulbs in rebuild_bulbs')
 
-    def writeState(self, newState, pcStatusOverride=None, phoneStatusOverride=None):
+    def writeState(self, newState, pcStatusOverride=None, phoneStatusOverride=None, source=None):
         "Write out the state of the bulbs in the room"
         # TODO Should actually override self.envState.*?
         if pcStatusOverride is not None:
@@ -160,7 +160,7 @@ class Room:
             bulbLog.info( "Command was %s, not actually saving" , newState )
             return
         bulbLogNewState = newState
-        if inspect.stack()[2].function == 'autoset':
+        if source == 'autoset':
             bulbLogNewState = f'autoset ({bulbLogNewState})'
         bulbLog.info('%s = %s', self.name, bulbLogNewState)
         self.state = newState
@@ -424,7 +424,7 @@ class Room:
         # ~211 ms
         self._onoff('on', writeState=writeState)
         if not auto and not originallyOn:
-            self.autoset(autosetDuration=1, force=True, forceLight=True )
+            self.autoset(autosetDuration=1, force=True, forceLight=True, _from_on=True)
 
     def toggle(self):
         """
@@ -571,6 +571,7 @@ class Room:
         autoset_auto_var=False,             # Automated call from timer
         force=False,                        # Override any manual override
         forceLight = False,                 # Force DND range to use sleep lighting.
+        _from_on=False,                      # Internal: preserve on() caller semantics without stack inspection.
         ):
         
         if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'])['power'] == 'off')):
@@ -580,13 +581,14 @@ class Room:
         #    logger.info('Power is off, cancelling autoset')
         #    return -1
         
-        from yeelightLib import SUNSET_TIME
         # set light level when computer is woken up, based on time of day
         rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
         now = datetime.time(rn.hour, rn.minute, 0)
         
         # logger.info(['autoset: ',now])
-        dayrange = [SUNRISE_TIME, SUNSET_TIME]
+        # Read the library's live value.  set_IRL_sunset() updates yeelightLib.SUNSET_TIME
+        # in place; the wildcard-imported room.SUNSET_TIME would otherwise remain stale.
+        dayrange = [SUNRISE_TIME, yeelight_lib.SUNSET_TIME]
         if time.localtime().tm_wday in [5, 6]:  # weekend
             dayrange[0] = WEEKEND_SUNRISE_TIME
         
@@ -648,10 +650,8 @@ class Room:
 
             return True
 
-        getCalcTimes()
-
         auto = not force
-        if inspect.stack()[2].function == 'on':
+        if _from_on:
             auto = True
 
         if isTimeInRange(dayrange):
