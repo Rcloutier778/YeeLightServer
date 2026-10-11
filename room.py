@@ -513,12 +513,19 @@ class Room:
     
     @retry
     def on(self, auto=False, force=None, writeState=True):
-        # ~10 ms
-        originallyOn = all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'on'))
-        # ~211 ms
-        self._onoff('on', writeState=writeState)
-        if not auto and not originallyOn:
-            self.autoset(autosetDuration=1, force=True, forceLight=True, _from_on=True)
+        if UNIFIED_AUTO_ON and force and not auto:
+            ct, brightness = self.getAutosetValues(auto, force, forceLight=force, _from_on=True)
+            self.set_scene(ct, brightness)
+        else:
+            if force and not auto:
+                originallyOn = False
+            else:
+                # ~10 ms
+                originallyOn = all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'on'))
+            # ~211 ms
+            self._onoff('on', writeState=writeState)
+            if not auto and not originallyOn:
+                self.autoset(autosetDuration=1, force=True, forceLight=True, _from_on=True)
 
     def toggle(self):
         """
