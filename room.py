@@ -823,7 +823,6 @@ class Room:
             if dct['time'] + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow():
                 if dct['action'] == '':
                     dct['action'] = self._getLastState()['state']
-                    logger.info(f'action was blank, setting to {dct["action"]} instead')
                 if (dct['action'] not in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) or (not isTimeInRange(DNDrange)):
                     #if (dct['action'] == 'toggle' and self.bulbs[0].get_properties(['power'])['power'] == 'on') or (dct['action'] == 'on'):
                     if dct['action'] == 'toggle' and self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'], forceCall=True)['power'] == 'on', selectBulbIps=[self.bulbs[0]._ip])[0] or (dct['action'] == 'on'):
