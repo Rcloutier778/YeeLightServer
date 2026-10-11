@@ -461,7 +461,7 @@ class Room:
                 lambda i: i.turn_off() if f == 'off' else i.turn_on(),
                 selectBulbIps=mismatched_ips,
             )
-
+            logger.info(f'Turned {self.name} bulbs {f}')
         if writeState:
             self.writeState(f)
 
@@ -746,6 +746,100 @@ class Room:
                 return 0
             self.off()
         return 0
+
+    def getAutosetValues(self,
+        autoset_auto_var=False,             # Automated call from timer
+        force=False,                        # Override any manual override
+        forceLight = False,                 # Force DND range to use sleep lighting.
+        _from_on=False,                      # Internal: preserve on() caller semantics without stack inspection.
+        ):
+        """
+        Run the same calculations as autoset, but don't actually apply anything, just return
+            color temperature and brightness. A value of None, None means turn off.
+        """
+
+        if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'])['power'] == 'off')):
+            return None, None
+
+
+        # set light level when computer is woken up, based on time of day
+        rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
+        now = datetime.time(rn.hour, rn.minute, 0)
+
+        # logger.info(['autoset: ',now])
+        # Read the library's live value.  set_IRL_sunset() updates yeelightLib.SUNSET_TIME
+        # in place; the wildcard-imported room.SUNSET_TIME would otherwise remain stale.
+        dayrange = [SUNRISE_TIME, yeelight_lib.SUNSET_TIME]
+        if time.localtime().tm_wday in [5, 6]:  # weekend
+            dayrange[0] = WEEKEND_SUNRISE_TIME
+
+        autosetNightRange = getNightRange()
+
+        nightrange = [dayrange[1], SLEEP_TIME]
+        DNDrange = [nightrange[1], dayrange[0]]
+
+        timeranges = [dayrange, nightrange, DNDrange]
+
+        for r in timeranges:
+            for rr in range(0, 2):
+                t = datetime.datetime.strptime(r[rr], "%I:%M:%p")
+                r[rr] = datetime.time(t.hour, t.minute, 0)
+
+        def isTimeInRange(timeRange):
+            if timeRange[0] == DNDrange[0] and timeRange[1] == DNDrange[1]:
+                return timeRange[0] <= now or now < timeRange[1]
+            return timeRange[0] <= now < timeRange[1]
+
+        # If what called autoset is not a checkping event
+        if not force and not autoset_auto_var:
+            # Check if system tray has been used recently to override autoset
+            dct = readManualOverride(self.name, returnDict=True)
+            if dct['time'] + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow():
+                if dct['action'] == '':
+                    dct['action'] = self._getLastState()['state']
+                    logger.info(f'action was blank, setting to {dct["action"]} instead')
+                if (dct['action'] not in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) or (not isTimeInRange(DNDrange)):
+                    #if (dct['action'] == 'toggle' and self.bulbs[0].get_properties(['power'])['power'] == 'on') or (dct['action'] == 'on'):
+                    if dct['action'] == 'toggle' and self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'])['power'] == 'on', selectBulbIps=[self.bulbs[0]._ip])[0] or (dct['action'] == 'on'):
+                        pass
+                    elif (dct['action'] == 'MANUAL_AUTOSET_FORCE_LIGHT') and (not isTimeInRange(DNDrange)):
+                        pass
+                    elif (dct['action'] in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) and isTimeInRange(nightrange):
+                        pass
+                    else:
+                        # if the manual action wasn't a manual autoset, or it's not in DND time, return
+                        props = self.bulbs[0].get_properties(['power','bright','ct'])
+                        if props['power']=='on':
+                            return int(props['ct']), int(props['bright'])
+                        else:
+                            return None, None
+
+        if AUTOSET_PHONE_REQUIRED and not force and autoset_auto_var:
+            ld = readManualOverride(self.name)
+            if ld + MANUAL_OVERRIDE_OFFSET < datetime.datetime.utcnow():
+                if not self.envState.phoneStatus:
+                    ld = readManualOverride(self.name)
+                    if ld + MANUAL_OVERRIDE_OFFSET <= datetime.datetime.utcnow():
+                        return None, None
+
+        auto = not force
+        if _from_on:
+            auto = True
+
+        if isTimeInRange(dayrange):
+            return DAY_COLOR, DAY_BRIGHTNESS
+        elif isTimeInRange(nightrange):
+            for (startTime, endTime, temperature, brightness) in autosetNightRange:
+                if startTime <= now and now < endTime:
+                    return temperature, brightness
+        elif isTimeInRange(DNDrange):
+            if forceLight:
+                return SLEEP_COLOR, SLEEP_BRIGHTNESS
+            return None, None
+        # TODO?
+        #return colorTemp, brightness
+
+
 
     def sunrise(self):
         """
