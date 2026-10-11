@@ -331,35 +331,95 @@ class Room:
             i.set_brightness(val)
 
     def day(self, duration=3000, auto=False):
-        if not auto:
-            self.on(auto=auto, writeState=False)
-        self.writeState('day')
-        # 3200
-        self.colorTempFlow(DAY_COLOR, duration, DAY_BRIGHTNESS)
+        if UNIFIED_AUTO_ON and not auto:
+            logger.info('unified on day') #TODO
+            self.writeState('day')
+            self.set_scene(DAY_COLOR, DAY_BRIGHTNESS)
+        else:
+            if not auto:
+                self.on(auto=auto, writeState=False)
+            self.writeState('day')
+            self.colorTempFlow(DAY_COLOR, duration, DAY_BRIGHTNESS)
     
     
     def dusk(self, duration=3000, auto=False):
-        if not auto:
-            self.on(auto=auto, writeState=False)
-        self.writeState('dusk')
-        # 3000
-        self.colorTempFlow(DUSK_COLOR, duration, DUSK_BRIGHTNESS)
-    
+        if UNIFIED_AUTO_ON and not auto:
+            self.writeState('dusk')
+            self.set_scene(DUSK_COLOR, DUSK_BRIGHTNESS)
+        else:
+            if not auto:
+                self.on(auto=auto, writeState=False)
+            self.writeState('dusk')
+            self.colorTempFlow(DUSK_COLOR, duration, DUSK_BRIGHTNESS)
+        
     
     def night(self, duration=3000, auto=False):
-        if not auto:
-            self.on(auto=auto, writeState=False)
-        self.writeState('night')
-        self.colorTempFlow(NIGHT_COLOR, duration, NIGHT_BRIGHTNESS)
+        if UNIFIED_AUTO_ON and not auto:
+            self.writeState('night')
+            self.set_scene(NIGHT_COLOR, NIGHT_BRIGHTNESS)
+        else:
+            if not auto:
+                self.on(auto=auto, writeState=False)
+            self.writeState('night')
+            self.colorTempFlow(NIGHT_COLOR, duration, NIGHT_BRIGHTNESS)
     
     
     def sleep(self, duration=3000, auto=False):
-        if not auto:
-            self.on(auto=auto, writeState=False)
-        self.writeState('sleep')
-        self.colorTempFlow(SLEEP_COLOR, duration, SLEEP_BRIGHTNESS)
-    
-    
+        if UNIFIED_AUTO_ON and not auto:
+            logger.info('unified on sleep') #TODO
+            self.writeState('sleep')
+            self.set_scene(SLEEP_COLOR, SLEEP_BRIGHTNESS)
+        else:
+            if not auto:
+                self.on(auto=auto, writeState=False)
+            self.writeState('sleep')
+            self.colorTempFlow(SLEEP_COLOR, duration, SLEEP_BRIGHTNESS)
+
+    def _threaded_set_scene(self, bulb, temperature, brightness):
+        for retryCount in range(3):
+            try:
+                bulb.set_scene(yeelight.SceneClass.CT, temperature, brightness)
+                break
+            except Exception as e:
+                logger.error('Got exception in _threaded_set_scene for bulb %s: %s', bulb._ip,       str(e))
+                time.sleep(0.5)
+        else:
+            logger.error('Hit max retries for bulb %s', bulb._ip)
+            raise RuntimeError('Hit max retries in _threaded_set_scene')
+
+    def set_scene(self, temperature, brightness):
+		# Unified way of turning bulb on and setting color+brightness.
+        errors = []
+        def run_bulb(bulb):
+            try:
+                self._threaded_set_scene(
+                    bulb,
+                    temperature,
+                    brightness,
+                )
+            except Exception as exc:
+                errors.append((bulb._ip, exc))
+
+        threads = []
+        for bulb in self.bulbs:
+            if bulb._ip in GU_BULBS:
+                continue
+            thread = threading.Thread(target=run_bulb, args=(bulb,))
+            thread.start()
+            threads.append(thread)
+
+        for thread in threads:
+            thread.join()
+
+        if errors:
+            for ip, exc in errors:
+                logger.error(
+                    'Color-temperature flow failed permanently for bulb %s: %s',
+                    ip,
+                    exc,
+                )
+            raise errors[0][1]
+
     def customTempFlow(self, temperature, duration=3000, auto=False, brightness=80):
         if not auto:
             self.on(auto=auto)

@@ -115,6 +115,14 @@ USE_GET_PROPERTIES = False
 PROPERTY_CACHE_TTL = 2.0
 
 
+# If True, if bulbs are off and a manual trigger happens, use set_scene to turn the bulbs on
+#   and set the lights settings.
+# If False, send the on signal first, then set light settings
+UNIFIED_AUTO_ON = True
+
+
+
+
 #formatter = logging.Formatter('%(asctime)s [pid %(process)d] [%(filename)s] %(levelname)s %(message)s')
 formatter = logging.Formatter('%(asctime)s [%(filename)s] %(levelname)s %(message)s')
 
