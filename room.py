@@ -8,6 +8,7 @@ import time
 import yeelight
 import asyncio
 import threading
+from concurrent.futures import ThreadPoolExecutor
 
 from influxdb_client import InfluxDBClient
 from influxdb_client.client.write_api import SYNCHRONOUS
@@ -260,7 +261,7 @@ class Room:
         logger.info('Restting %s to last state of %s', self.name, lastState)
 
         #states = [bulb.get_properties(['power','ct','bright']) for bulb in self.bulbs]
-        states = self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power', 'ct', 'bright']))
+        states = self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power', 'ct', 'bright'], forceCall=True))
 
         if lastState == 'off' and not all(state['power'] == 'off' for state in states):
             self.off()
@@ -284,42 +285,91 @@ class Room:
                 self.customTempFlow(int(temperature), brightness=int(brightness))
 
 
-    def applyFuncAndRebuild(self, func, selectBulbIps=None):
-        """
-        Loop through the bulbs in self.bulbs, apply func to each
-        If it encounters an error, rebuild the error bulb only.
-        selectBulbIps = list of bulb ips from self.bulbs to apply the func on
-        """
-        result = []
-        bulbs = []
-        tempBulbs = list(self.bulbs)
-        for attempt in range(3):
-            bulbs = list(tempBulbs)
-            tempBulbs = []
-            for bulbIdx, bulb in enumerate(list(bulbs)):
-                if bulb is None:
-                    tempBulbs.append(None)
-                    continue
-                if selectBulbIps is not None and bulb._ip not in selectBulbIps:
-                    tempBulbs.append(None)
-                    continue
-                try:
-                    result.append(func(bulb))
-                    tempBulbs.append(None)
-                except Exception as e:
-                    logger.error('Error from %s on try %d' % (bulb, attempt,))
-                    logger.exception(e)
-                    newBulb = Bulb(bulb._ip, roomName=self.name)
-                    tempBulbs.append(newBulb)
-                    self.bulbs[bulbIdx] = newBulb
-            if all(x is None for x in tempBulbs):
-                if attempt != 0:
-                    logger.info("Recovered from bulb failure")
-                break
-        else:
-            raise RuntimeError("Failed to rebuild after apply failure!")
+    def _runConcurrently(self, func, bulbs=None):
+        """Run one independent operation per bulb with a bounded worker pool.
 
-        return result
+        The result order matches the input bulb order, regardless of completion
+        order. Exceptions are returned with their bulb so callers can preserve
+        their own retry and recovery policies. Callers must not submit more than
+        one operation for a given Bulb object in the same batch.
+        """
+        targets = list(self.bulbs if bulbs is None else bulbs)
+        if not targets:
+            return []
+
+        max_workers = min(
+            len(targets),
+            max(1, YEELIGHT_MAX_CONCURRENT_BULB_OPERATIONS),
+        )
+        with ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix='yeelight-%s' % self.name,
+        ) as executor:
+            futures = [executor.submit(func, bulb) for bulb in targets]
+            outcomes = []
+            for bulb, future in zip(targets, futures):
+                try:
+                    outcomes.append((bulb, future.result(), None))
+                except Exception as exc:
+                    outcomes.append((bulb, None, exc))
+        return outcomes
+
+    def applyFuncAndRebuild(self, func, selectBulbIps=None):
+        """Apply ``func`` to selected bulbs concurrently, rebuilding failures.
+
+        Operations on different bulbs can overlap, but each bulb is only used
+        by one worker in a batch. Failed bulbs are reconstructed in the calling
+        thread and retried individually, for at most three total attempts. The
+        returned values are in the original bulb-list order.
+        """
+        original_bulbs = list(self.bulbs)
+        selected_ips = set(selectBulbIps) if selectBulbIps is not None else None
+        pending = {
+            idx: bulb
+            for idx, bulb in enumerate(original_bulbs)
+            if bulb is not None
+            and (selected_ips is None or bulb._ip in selected_ips)
+        }
+        results = {}
+
+        for attempt in range(3):
+            if not pending:
+                break
+
+            batch = sorted(pending.items())
+            outcomes = self._runConcurrently(func, [bulb for _, bulb in batch])
+            next_pending = {}
+
+            for (bulb_idx, bulb), (_, value, error) in zip(batch, outcomes):
+                if error is None:
+                    results[bulb_idx] = value
+                    continue
+
+                logger.error(
+                    'Error from %s on try %d: %s',
+                    bulb,
+                    attempt + 1,
+                    error,
+                    exc_info=(type(error), error, error.__traceback__),
+                )
+                # Keep list mutation and Bulb construction out of worker threads.
+                new_bulb = Bulb(bulb._ip, roomName=self.name)
+                self.bulbs[bulb_idx] = new_bulb
+                next_pending[bulb_idx] = new_bulb
+
+            pending = next_pending
+            if not pending and attempt > 0:
+                logger.info('Recovered from bulb failure after %d attempt(s)', attempt + 1)
+
+        if pending:
+            failed_ips = ', '.join(
+                self.bulbs[idx]._ip for idx in sorted(pending)
+            )
+            raise RuntimeError(
+                'Failed to rebuild after apply failure for bulb(s): %s' % failed_ips
+            )
+
+        return [results[idx] for idx in sorted(results)]
 
     def graceful_kill(self):
         logger.info('Shutting down %s', self.name)
@@ -327,8 +377,7 @@ class Room:
 
     def brightness(self, val):
         bulbLog.info('Brightness = %d', val)
-        for i in self.bulbs:
-            i.set_brightness(val)
+        self.applyFuncAndRebuild(lambda bulb: bulb.set_brightness(val))
 
     def day(self, duration=3000, auto=False):
         if UNIFIED_AUTO_ON and not auto:
@@ -388,33 +437,18 @@ class Room:
             raise RuntimeError('Hit max retries in _threaded_set_scene')
 
     def set_scene(self, temperature, brightness):
-		# Unified way of turning bulb on and setting color+brightness.
-        errors = []
-        def run_bulb(bulb):
-            try:
-                self._threaded_set_scene(
-                    bulb,
-                    temperature,
-                    brightness,
-                )
-            except Exception as exc:
-                errors.append((bulb._ip, exc))
-
-        threads = []
-        for bulb in self.bulbs:
-            if bulb._ip in GU_BULBS:
-                continue
-            thread = threading.Thread(target=run_bulb, args=(bulb,))
-            thread.start()
-            threads.append(thread)
-
-        for thread in threads:
-            thread.join()
+        # Unified way of turning a bulb on and setting color + brightness.
+        eligible_bulbs = [bulb for bulb in self.bulbs if bulb._ip not in GU_BULBS]
+        outcomes = self._runConcurrently(
+            lambda bulb: self._threaded_set_scene(bulb, temperature, brightness),
+            bulbs=eligible_bulbs,
+        )
+        errors = [(bulb._ip, error) for bulb, _, error in outcomes if error is not None]
 
         if errors:
             for ip, exc in errors:
                 logger.error(
-                    'Color-temperature flow failed permanently for bulb %s: %s',
+                    'Color-temperature scene failed permanently for bulb %s: %s',
                     ip,
                     exc,
                 )
@@ -436,7 +470,7 @@ class Room:
         max_attempts = 5
         for attempt in range(max_attempts):
             states = self.applyFuncAndRebuild(
-                lambda x: (x._ip, x.get_properties(['power'])['power'])
+                lambda x: (x._ip, x.get_properties(['power'], forceCall=True)['power'])
             )
             state_by_ip = dict(states)
             active_ips = {bulb._ip for bulb in self.bulbs}
@@ -461,7 +495,7 @@ class Room:
                 lambda i: i.turn_off() if f == 'off' else i.turn_on(),
                 selectBulbIps=mismatched_ips,
             )
-            logger.info(f'Turned {self.name} bulbs {f}')
+
         if writeState:
             self.writeState(f)
 
@@ -480,7 +514,7 @@ class Room:
     @retry
     def on(self, auto=False, force=None, writeState=True):
         # ~10 ms
-        originallyOn = all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'])['power'] == 'on'))
+        originallyOn = all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'on'))
         # ~211 ms
         self._onoff('on', writeState=writeState)
         if not auto and not originallyOn:
@@ -490,7 +524,7 @@ class Room:
         """
         Doesn't use the built in toggle command in yeelight as it sometimes fails to toggle one of the lights.
         """
-        oldPower = self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'])['power'], selectBulbIps=[self.bulbs[0]._ip])[0]
+        oldPower = self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'], forceCall=True)['power'], selectBulbIps=[self.bulbs[0]._ip])[0]
         #oldPower = self.bulbs[0].get_properties(['power'])['power']
         if oldPower == 'off':
             self.on(force=True)
@@ -502,10 +536,15 @@ class Room:
         green = int(green)
         blue = int(blue)
         transition = yeelight.RGBTransition(red=red, green=green, blue=blue)
-        for i in self.bulbs:
-            i.start_flow(yeelight.Flow(count=1,
-                                       action=yeelight.Flow.actions.stay,
-                                       transitions=[transition]))
+        self.applyFuncAndRebuild(
+            lambda bulb: bulb.start_flow(
+                yeelight.Flow(
+                    count=1,
+                    action=yeelight.Flow.actions.stay,
+                    transitions=[transition],
+                )
+            )
+        )
 
 
     def _threadedColorTempFlow(self, bulb, transition):
@@ -541,26 +580,14 @@ class Room:
                 red=red, green=green, blue=blue
             )
 
-        errors = []
-
         def run_bulb(bulb):
-            try:
-                self._threadedColorTempFlow(
-                    bulb,
-                    rgb_transition if bulb._ip in GU_BULBS else transition,
-                )
-            except Exception as exc:
-                errors.append((bulb._ip, exc))
+            self._threadedColorTempFlow(
+                bulb,
+                rgb_transition if bulb._ip in GU_BULBS else transition,
+            )
 
-        threads = []
-        for bulb in self.bulbs:
-            thread = threading.Thread(target=run_bulb, args=(bulb,))
-            thread.start()
-            threads.append(thread)
-
-        for thread in threads:
-            thread.join()
-
+        outcomes = self._runConcurrently(run_bulb)
+        errors = [(bulb._ip, error) for bulb, _, error in outcomes if error is not None]
         if errors:
             for ip, exc in errors:
                 logger.error(
@@ -569,7 +596,6 @@ class Room:
                     exc,
                 )
             raise errors[0][1]
-    
 
     #@retry
     def colorTempFlow(self, temperature=3200, duration=3000, brightness=80):
@@ -634,7 +660,7 @@ class Room:
         _from_on=False,                      # Internal: preserve on() caller semantics without stack inspection.
         ):
         
-        if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'])['power'] == 'off')):
+        if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'off')):
             logger.info('Power is off, cancelling autoset')
             return -1
         #if not force and all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
@@ -679,7 +705,7 @@ class Room:
                     logger.info(f'action was blank, setting to {dct["action"]} instead')
                 if (dct['action'] not in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) or (not isTimeInRange(DNDrange)):
                     #if (dct['action'] == 'toggle' and self.bulbs[0].get_properties(['power'])['power'] == 'on') or (dct['action'] == 'on'):
-                    if dct['action'] == 'toggle' and self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'])['power'] == 'on', selectBulbIps=[self.bulbs[0]._ip])[0] or (dct['action'] == 'on'):
+                    if dct['action'] == 'toggle' and self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'], forceCall=True)['power'] == 'on', selectBulbIps=[self.bulbs[0]._ip])[0] or (dct['action'] == 'on'):
                         pass
                     elif (dct['action'] == 'MANUAL_AUTOSET_FORCE_LIGHT') and (not isTimeInRange(DNDrange)):
                         pass
@@ -698,7 +724,7 @@ class Room:
                     self.off(auto=True)
                     return -1
 
-        current_bulb_properties = self.applyFuncAndRebuild(lambda x: [x, x.get_properties(['power','bright','ct'])]) if AUTOSET_TIMER_CHECK_BEFORE_EXEC else []
+        current_bulb_properties = self.applyFuncAndRebuild(lambda x: [x, x.get_properties(['power','bright','ct'], forceCall=True)]) if AUTOSET_TIMER_CHECK_BEFORE_EXEC else []
         current_bulb_properties = { b._ip : props for (b, props) in current_bulb_properties }
 
         def _bulb_properties_match(d_power, d_temp, d_bright):
@@ -748,48 +774,48 @@ class Room:
         return 0
 
     def getAutosetValues(self,
-        autoset_auto_var=False,             # Automated call from timer
-        force=False,                        # Override any manual override
-        forceLight = False,                 # Force DND range to use sleep lighting.
-        _from_on=False,                      # Internal: preserve on() caller semantics without stack inspection.
-        ):
+                         autoset_auto_var=False,             # Automated call from timer
+                         force=False,                        # Override any manual override
+                         forceLight = False,                 # Force DND range to use sleep lighting.
+                         _from_on=False,                      # Internal: preserve on() caller semantics without stack inspection.
+                         ):
         """
         Run the same calculations as autoset, but don't actually apply anything, just return
             color temperature and brightness. A value of None, None means turn off.
         """
-
+    
         if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'])['power'] == 'off')):
             return None, None
-
-
+    
+    
         # set light level when computer is woken up, based on time of day
         rn = datetime.datetime.now()  # If there is ever a problem here, just use time.localtime()
         now = datetime.time(rn.hour, rn.minute, 0)
-
+    
         # logger.info(['autoset: ',now])
         # Read the library's live value.  set_IRL_sunset() updates yeelightLib.SUNSET_TIME
         # in place; the wildcard-imported room.SUNSET_TIME would otherwise remain stale.
         dayrange = [SUNRISE_TIME, yeelight_lib.SUNSET_TIME]
         if time.localtime().tm_wday in [5, 6]:  # weekend
             dayrange[0] = WEEKEND_SUNRISE_TIME
-
+    
         autosetNightRange = getNightRange()
-
+    
         nightrange = [dayrange[1], SLEEP_TIME]
         DNDrange = [nightrange[1], dayrange[0]]
-
+    
         timeranges = [dayrange, nightrange, DNDrange]
-
+    
         for r in timeranges:
             for rr in range(0, 2):
                 t = datetime.datetime.strptime(r[rr], "%I:%M:%p")
                 r[rr] = datetime.time(t.hour, t.minute, 0)
-
+    
         def isTimeInRange(timeRange):
             if timeRange[0] == DNDrange[0] and timeRange[1] == DNDrange[1]:
                 return timeRange[0] <= now or now < timeRange[1]
             return timeRange[0] <= now < timeRange[1]
-
+    
         # If what called autoset is not a checkping event
         if not force and not autoset_auto_var:
             # Check if system tray has been used recently to override autoset
@@ -813,7 +839,7 @@ class Room:
                             return int(props['ct']), int(props['bright'])
                         else:
                             return None, None
-
+    
         if AUTOSET_PHONE_REQUIRED and not force and autoset_auto_var:
             ld = readManualOverride(self.name)
             if ld + MANUAL_OVERRIDE_OFFSET < datetime.datetime.utcnow():
@@ -821,11 +847,11 @@ class Room:
                     ld = readManualOverride(self.name)
                     if ld + MANUAL_OVERRIDE_OFFSET <= datetime.datetime.utcnow():
                         return None, None
-
+    
         auto = not force
         if _from_on:
             auto = True
-
+    
         if isTimeInRange(dayrange):
             return DAY_COLOR, DAY_BRIGHTNESS
         elif isTimeInRange(nightrange):
@@ -851,9 +877,11 @@ class Room:
         overallDuration = 1200000  # 1200000 == 20 min
         self.on()
         try:
-            for i in self.bulbs:
-                i.set_brightness(0)
-                i.set_rgb(255, 0, 0)
+            def set_sunrise_initial_state(bulb):
+                bulb.set_brightness(0)
+                bulb.set_rgb(255, 0, 0)
+
+            self.applyFuncAndRebuild(set_sunrise_initial_state)
             logger.info("Set initial state for sunrise")
             time.sleep(1)
 
@@ -872,8 +900,15 @@ class Room:
             #    yeelight.TemperatureTransition(degrees=3200,
             #        duration=overallDuration * 0.5, brightness=80)
             #]
-            for i in self.bulbs:
-                i.start_flow(yeelight.Flow(count=1, action=yeelight.Flow.actions.stay, transitions=transitions))
+            self.applyFuncAndRebuild(
+                lambda bulb: bulb.start_flow(
+                    yeelight.Flow(
+                        count=1,
+                        action=yeelight.Flow.actions.stay,
+                        transitions=transitions,
+                    )
+                )
+            )
             logger.info('Sunrise Flowing')
 
         except Exception:

@@ -114,6 +114,10 @@ HTTP_EVENT_FROM_PC = 'manual'
 USE_GET_PROPERTIES = False
 PROPERTY_CACHE_TTL = 2.0
 
+# Bound the number of simultaneous bulb network operations. Current rooms are
+# small, but the limit avoids unbounded thread creation if the configuration grows.
+YEELIGHT_MAX_CONCURRENT_BULB_OPERATIONS = 8
+
 
 # If True, if bulbs are off and a manual trigger happens, use set_scene to turn the bulbs on
 #   and set the lights settings.
