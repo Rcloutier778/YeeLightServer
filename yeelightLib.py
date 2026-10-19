@@ -338,6 +338,88 @@ class Bulb(yeelight.Bulb):
         return f'Bulb({self._ip}, room={self.roomName})'
         #return super().__repr__()
 
+    def _discard_socket(self):
+        """Close and forget the underlying Yeelight command socket safely."""
+        sock = getattr(self, '_Bulb__socket', None)
+        if sock is not None:
+            try:
+                sock.close()
+            except OSError:
+                pass
+        # The upstream Bulb class stores its socket in the name-mangled
+        # ``_Bulb__socket`` attribute. Reset it so a future command reconnects.
+        self._Bulb__socket = None
+
+    def send_command(self, method, params=None):
+        """Send a command, treating a clean socket EOF as a failed command.
+
+        The upstream synchronous client loops while waiting for a response but
+        doesn't handle ``recv() == b''``. A bulb that closes a connection
+        gracefully can therefore cause a zero-byte receive busy loop. Raising a
+        BulbException here lets the existing per-bulb retry/rebuild logic recover.
+        """
+        command = {'id': self._cmd_id, 'method': method, 'params': params}
+        request = (json.dumps(command, separators=(',', ':')) + '\r\n').encode('utf8')
+        logging.getLogger('yeelight').debug('%s > %s', self, request)
+
+        try:
+            self._socket.send(request)
+            # Retain the upstream workaround for certain bulb firmware versions.
+            self._socket.send(b' ')
+        except OSError as exc:
+            self._discard_socket()
+            raise yeelight.BulbException(
+                'A socket error occurred when sending the command.'
+            ) from exc
+
+        if self._music_mode:
+            return {'result': ['ok']}
+
+        response = None
+        while response is None:
+            try:
+                data = self._socket.recv(16 * 1024)
+            except OSError as exc:
+                self._discard_socket()
+                raise yeelight.BulbException('Bulb closed the connection.') from exc
+
+            # Critical fix: a zero-byte recv means EOF, not "no data yet".
+            # Without this check, the upstream response loop spins forever after
+            # the bulb closes its end of the connection.
+            if not data:
+                self._discard_socket()
+                raise yeelight.BulbException('Bulb closed the connection (EOF).')
+
+            for line in data.split(b'\r\n'):
+                if not line:
+                    continue
+                try:
+                    line = json.loads(line.decode('utf8'))
+                    logging.getLogger('yeelight').debug('%s < %s', self, line)
+                except ValueError:
+                    line = {'result': ['invalid command']}
+
+                if line.get('method') != 'props':
+                    # Keep the upstream behavior of processing the entire packet,
+                    # including any property notifications following the response.
+                    response = line
+                else:
+                    self._last_properties.update(line['params'])
+
+        if (
+            method == 'set_music'
+            and params == [0]
+            and isinstance(response.get('error'), dict)
+            and response['error'].get('code') == -5000
+        ):
+            # Match the upstream library's harmless stop-music error handling.
+            return {'id': 1, 'result': ['ok']}
+
+        if 'error' in response:
+            raise yeelight.BulbException(response['error'])
+
+        return response
+
     def get_properties(self, requested_properties=yeelight.main.DEFAULT_PROPS, ssdp_fallback=False, forceCall=False):
         cache_expired = (time.monotonic() - self._properties_cache_time) >= PROPERTY_CACHE_TTL
         needs_refresh = (

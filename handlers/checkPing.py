@@ -17,12 +17,15 @@ def checkPingThreaded(event, pipe, cond, pcStatus, phoneStatus):
     while True:
         try:
             res, pcStatus, phoneStatus = checkPing(pcStatus, phoneStatus)
-            pipe.send([phoneStatus, pcStatus, res])
-            event.set()
+            # Serialize the payload and its wake signal against the server's
+            # resolve_wake() drain by using the shared condition lock.
             with cond:
+                pipe.send([phoneStatus, pcStatus, res])
+                event.set()
                 cond.notify()
-        except:
+        except Exception:
             logger.exception('Exception in checkping!')
+            time.sleep(0.5)
 
 
 def checkPing(pcStatus, phoneStatus):

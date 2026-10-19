@@ -43,12 +43,13 @@ def monitor_advert_bulbs(event, cond):
             # trigger another rebuild. Only Yeelight notifications should wake the server.
             is_yeelight_advert = b'yeelight://' in res and b'model:' in res
             if b'ssdp:discover' not in res and is_yeelight_advert:
-                event.set()
                 with cond:
+                    event.set()
                     logger.info("Advertising bulb wake")
                     cond.notify()
-        except:
+        except Exception:
             logger.exception('Got exception in advert bulb!')
+            time.sleep(0.5)
 
 def monitor_bulb_static(event, cond):
     """
@@ -77,13 +78,14 @@ def monitor_bulb_static(event, cond):
                         logger.info('Missing bulb at ip addr: %s', missing_ip)
                     
                     current_bulbs_ips = found_bulbs_ip
-                    event.set()
                     with cond:
+                        event.set()
                         logger.info("Static bulb")
                         cond.notify()
             time.sleep(SLEEP_TIME)
-        except:
+        except Exception:
             logger.exception("Got exception in static bulb")
+            time.sleep(1.0)
 
 
 def monitor_ping(event, cond):
@@ -98,12 +100,15 @@ def monitor_ping(event, cond):
         for ip, proc in proc_dict.items():
             if proc.poll() is not None:
                 proc.communicate()
-                event.set()
                 with cond:
+                    event.set()
                     logger.info("ping bulb %s", ip)
                     cond.notify()
                 time.sleep(SLEEP_TIME)
                 proc_dict[ip] = subprocess.Popen((cmd % ip).split(' '))
+        # Polling Popen objects does not block; without this delay this legacy
+        # monitor spins at full CPU when all child processes are still running.
+        time.sleep(0.1)
 
 
 def monitor_bulb_ping(event, cond):
@@ -144,10 +149,11 @@ def monitor_bulb_ping(event, cond):
 
                 current_bulb_ips = list(found_bulb_ips)
                 if send_cond:
-                    event.set()
                     with cond:
+                        event.set()
                         logger.info('Ping bulb')
                         cond.notify()
             time.sleep(SLEEP_TIME)
         except Exception:
             logger.exception('Got exception in monitor_bulb_ping')
+            time.sleep(1.0)

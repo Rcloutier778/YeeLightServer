@@ -63,9 +63,10 @@ def monitor_switches(event, cond, pipe):
         nonlocal cond
         nonlocal ackRecvTime
         logger.info('Switch in %s hit %s', room, action)
-        pipe.send([room, action])
-        event.set()
+        # Keep payload delivery and its wake flag atomic relative to the main loop.
         with cond:
+            pipe.send([room, action])
+            event.set()
             cond.notify()
         while not pipe.poll(2):
             logger.error('Switches did not receive an ack response!')
@@ -94,19 +95,28 @@ def monitor_switches(event, cond, pipe):
     while True:
         try:
             res = proc.stdout.readline()
-            if res:
-                res = res.strip()
-
-            # TODO
-            logger.info(res)
             if not res:
+                # EOF is returned immediately on a dead/exited rtl_433 process.
+                # Without a delay, this loop can consume a CPU core while counting
+                # to 100; empty strings also created misleading blank log entries.
                 noneResCount += 1
-                if noneResCount >= 10:
-                    logger.warn("Got None as rtl_433 output %d times!", noneResCount)
-                if noneResCount >= 100:
+                if noneResCount == 1:
+                    logger.warning("rtl_433 returned empty output (EOF); checking/restarting its process")
+                # readline() returns immediately at EOF. If the subprocess has
+                # exited, restart now; if its pipe is temporarily empty while the
+                # process remains alive, back off rather than hot-spinning.
+                if proc.poll() is not None or noneResCount >= 100:
                     noneResCount = 0
                     proc = restart_proc()
+                else:
+                    time.sleep(0.1)
                 continue
+
+            res = res.strip()
+            if not res:
+                # Ignore blank lines without treating them as process EOF.
+                continue
+            logger.info(res)
             noneResCount = 0
             try:
                 res = json.loads(res)

@@ -252,8 +252,52 @@ class Server(object):
         """
         return self.ping_event.is_set() or self.bulb_event.is_set() or self.switch_event.is_set() or self.http_event.is_set()
     
+    def _drain_event_pipe(self, event, pipe, label, acknowledge=False, max_messages=256):
+        """Drain a signaled child pipe without allowing EOF to spin the main loop.
+
+        Call this while holding ``wake_condition``. Producers also send and set
+        their events while holding that condition, so clearing the event before
+        draining cannot lose a concurrent notification.
+        """
+        event.clear()
+        messages = []
+        pipe_closed = False
+
+        for _ in range(max_messages):
+            try:
+                if not pipe.poll():
+                    break
+                message = pipe.recv()
+            except (EOFError, OSError) as exc:
+                # multiprocessing.Connection.poll() can be true at EOF. If recv()
+                # then raises and the event is left set, run() repeatedly retries
+                # this same path without ever reaching its timed wait.
+                logger.warning('%s event pipe closed while draining: %s', label, exc)
+                pipe_closed = True
+                break
+
+            messages.append(message)
+            if acknowledge:
+                try:
+                    pipe.send(0)
+                except (EOFError, OSError) as exc:
+                    logger.warning('%s event pipe could not be acknowledged: %s', label, exc)
+                    pipe_closed = True
+                    break
+        else:
+            # Bound each drain so a producer that floods events cannot starve
+            # the rest of the server. Leave a wake pending if more messages remain.
+            try:
+                if not pipe_closed and pipe.poll():
+                    logger.warning('%s event pipe has more than %d queued messages; continuing next loop', label, max_messages)
+                    event.set()
+            except (EOFError, OSError):
+                pipe_closed = True
+
+        return messages
+
     def resolve_wake(self):
-        """Collect all currently pending event payloads without dropping bursts."""
+        """Collect pending payloads and consume each wake signal safely."""
         logger.info("Resolving wake")
         self.ping_results = []
         self.switch_requests = []
@@ -261,35 +305,37 @@ class Server(object):
         self.bulb_wake = self.bulb_event.is_set()
 
         if self.bulb_wake:
-            logger.info("Resolving bulb event")
             self.bulb_event.clear()
+            logger.info("Resolving bulb event")
 
         if self.ping_event.is_set():
             logger.info("Resolving ping event")
-            while self.ping_pipe.poll():
-                self.ping_results.append(self.ping_pipe.recv())
-            self.ping_event.clear()
+            self.ping_results = self._drain_event_pipe(
+                self.ping_event, self.ping_pipe, 'ping'
+            )
 
         if self.switch_event.is_set():
             logger.info("Resolving switch event")
-            # The switch child waits for an acknowledgement before sending the next
-            # request. Acknowledge each request rather than discarding later payloads.
-            while self.switch_pipe.poll():
-                request = self.switch_pipe.recv()
-                self.switch_requests.append(request)
-                self.switch_pipe.send(0)
-            self.switch_event.clear()
-            
+            # The switch child waits for one acknowledgement per request.
+            self.switch_requests = self._drain_event_pipe(
+                self.switch_event, self.switch_pipe, 'switch', acknowledge=True
+            )
+
             # Have server beep
-            os.system("sudo sh -c \"echo -e '\\a' > /dev/console\"")
+            if self.switch_requests:
+                os.system("sudo sh -c \"echo -e '\\a' > /dev/console\"")
             for switch_room, switch_action in self.switch_requests:
-                self.websocket_pipe.send((switch_room, switch_action))
+                try:
+                    self.websocket_pipe.send((switch_room, switch_action))
+                except (EOFError, OSError):
+                    logger.exception('Could not forward switch request to websocket process')
+                    break
 
         if self.http_event.is_set():
             logger.info("Resolving http event")
-            while self.http_pipe.poll():
-                self.http_requests.append(self.http_pipe.recv())
-            self.http_event.clear()
+            self.http_requests = self._drain_event_pipe(
+                self.http_event, self.http_pipe, 'http'
+            )
 
     def run(self):
         """
@@ -312,7 +358,12 @@ class Server(object):
             global_action('autoset', force=True)
         except Exception:
             logger.exception("Got exception when doing run_server first autoset, ignoring...")
+        # A normal iteration waits on wake_condition, so repeated sub-10ms
+        # iterations indicate a stale wake flag or another unexpected spin.
+        rapid_loop_count = 0
+        last_spin_warning = 0.0
         while True:
+            loop_started = time.monotonic()
             try:
                 self.timer_wake = True
                 self.switch_room, self.switch_action = None, None
@@ -437,17 +488,23 @@ class Server(object):
                         if http_res['query'] == 'getProperty':
                             logger.info('getProperty')
                             room_name = http_res['room']
-                            if room_name not in ROOMS:
-                                logger.error('Unknown room: %s', room_name)
-                                self.http_pipe.send({})
-                                continue
-
-                            tmp_bulbs = ROOMS[room_name].bulbs
-                            if tmp_bulbs:
-                                properties = list(http_res.get('properties', ()))
-                                self.http_pipe.send(tmp_bulbs[0].get_properties(properties))
+                            properties = list(http_res.get('properties', ()))
+                            if room_name == 'global':
+                                tmp_res = {}
+                                for room_name, room_bulbs in ROOMS.items():
+                                    tmp_res[room_name] = room_bulbs.bulbs[0].get_properties(properties)
+                                self.http_pipe.send(tmp_res)
                             else:
-                                self.http_pipe.send({})
+                                if room_name not in ROOMS:
+                                    logger.error('Unknown room: %s', room_name)
+                                    self.http_pipe.send({})
+                                    continue
+
+                                tmp_bulbs = ROOMS[room_name].bulbs
+                                if tmp_bulbs:
+                                    self.http_pipe.send(tmp_bulbs[0].get_properties(properties))
+                                else:
+                                    self.http_pipe.send({})
 
                 if not event_processed:
                     self.ping_res = None
@@ -468,7 +525,34 @@ class Server(object):
 
             except Exception:
                 logger.exception("Exception in server run loop!")
-                rebuild_bulbs()
+                try:
+                    rebuild_bulbs()
+                except Exception:
+                    logger.exception("Bulb rebuild after server-loop error also failed")
+                # Avoid repeatedly retrying a failing iteration at full speed.
+                time.sleep(0.25)
+            finally:
+                elapsed = time.monotonic() - loop_started
+                if elapsed < 0.01:
+                    rapid_loop_count += 1
+                else:
+                    rapid_loop_count = 0
+
+                if rapid_loop_count >= 20:
+                    now_monotonic = time.monotonic()
+                    if now_monotonic - last_spin_warning >= 60:
+                        logger.error(
+                            "Main loop spin guard activated: 20 consecutive iterations "
+                            "completed in under 10ms (ping=%s bulb=%s switch=%s http=%s)",
+                            self.ping_event.is_set(),
+                            self.bulb_event.is_set(),
+                            self.switch_event.is_set(),
+                            self.http_event.is_set(),
+                        )
+                        last_spin_warning = now_monotonic
+                    # Keep a stale/spurious wake condition from consuming a core.
+                    time.sleep(0.05)
+                    rapid_loop_count = 0
 
 
 def run_server():

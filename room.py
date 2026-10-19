@@ -129,7 +129,7 @@ class Room:
             else:
                 if YEELIGHT_USE_SAFE_BULBS:
                     logger.info("Adding Safe bulbs")
-                    found_bulb_ips = list(set(found_bulb_ips) | set(safe_room_to_ips[self.name]))
+                    found_bulb_ips = sorted(set(found_bulb_ips) | set(safe_room_to_ips[self.name]))
                 new_bulbs = [Bulb(found_ip, roomName=self.name) for found_ip in found_bulb_ips]
 
             # Construct the replacement list before swapping it into the room so a
@@ -527,6 +527,7 @@ class Room:
             if not auto and not originallyOn:
                 self.autoset(autosetDuration=1, force=True, forceLight=True, _from_on=True)
 
+
     def toggle(self):
         """
         Doesn't use the built in toggle command in yeelight as it sometimes fails to toggle one of the lights.
@@ -790,7 +791,7 @@ class Room:
         Run the same calculations as autoset, but don't actually apply anything, just return
             color temperature and brightness. A value of None, None means turn off.
         """
-
+    
         if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'off')):
             return None, None
     
@@ -934,7 +935,7 @@ class Room:
         jdict = self._getLastState()
         logger.info("In returnFromAway")
         logger.info(f'state: {jdict["state"]} phoneStatus: {jdict["phoneStatus"]}')
-        if jdict['state'] == 'off' and not jdict['phoneStatus']:
+        if self.name == 'LivingRoom' and jdict['state'] == 'off' and not jdict['phoneStatus']:
             logger.info("setting lights from returnFromAway")
             self.autoset(autosetDuration=1, force=True)
             writeManualOverride(

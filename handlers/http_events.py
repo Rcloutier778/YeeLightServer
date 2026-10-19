@@ -3,6 +3,7 @@ import json
 import signal
 import sys
 import platform
+import time
 import urllib.parse
 from yeelightLib import *
 
@@ -16,9 +17,9 @@ def YeelightHTTP(event, cond, pipe):
             'query': 'getProperty',
             'properties': properties
         }
-        pipe.send(data)
-        event.set()
         with cond:
+            pipe.send(data)
+            event.set()
             cond.notify()
         if pipe.poll(10):
             res = pipe.recv()
@@ -121,9 +122,9 @@ def YeelightHTTP(event, cond, pipe):
                 del data['newState']
                 del data['eventType']
                 pipe_data['kwargs'] = data
-                pipe.send(pipe_data)
-                event.set()
                 with cond:
+                    pipe.send(pipe_data)
+                    event.set()
                     cond.notify()
                 
                 self.send_response(200)
@@ -163,6 +164,8 @@ def http_server(event, cond, pipe):
             pass
         except Exception:
             logger.exception("Error in server")
+            # Avoid a tight restart loop if serve_forever repeatedly fails.
+            time.sleep(0.5)
 
     cleanup()
 

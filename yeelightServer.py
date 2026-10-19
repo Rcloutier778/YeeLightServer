@@ -66,7 +66,7 @@ class MyHandler(BaseHTTPRequestHandler):
         data = json.loads(self.data_string)
         logger.info(data)
         try:
-            if data["eventType"] == 'manual':
+            if data["eventType"] == HTTP_EVENT_FROM_PC:
                 writeManualOverride()
                 global_action('writeState', data["newState"])
 
