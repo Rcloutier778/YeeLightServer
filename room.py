@@ -114,37 +114,61 @@ class Room:
 
 
     def rebuild_bulbs(self, discovered_bulb_ips=None):
-        """Rebuild the room bulb list from an optional shared discovery result."""
+        """Reconcile the effective room inventory with a shared discovery result.
+
+        Safe bulbs are merged *before* comparing inventories. This prevents a
+        transiently incomplete SSDP scan from rebuilding an unchanged room.
+        Existing Bulb instances are retained for IPs that remain in the effective
+        inventory; only newly added IPs receive new objects.
+        """
         if discovered_bulb_ips is None:
             discovered_bulb_ips = [b['ip'] for b in yeelight.discover_bulbs(3)]
-        found_bulb_ips = sorted(set(discovered_bulb_ips) & set(room_to_ips[self.name]))
+
+        configured_ips = set(room_to_ips[self.name])
+        found_bulb_ips = set(discovered_bulb_ips) & configured_ips
+
+        if YEELIGHT_STATIC_REBUILD:
+            effective_bulb_ips = sorted(configured_ips)
+        else:
+            if YEELIGHT_USE_SAFE_BULBS:
+                found_bulb_ips |= (set(safe_room_to_ips[self.name]) & configured_ips)
+            effective_bulb_ips = sorted(found_bulb_ips)
+
         current_bulb_ips = sorted(bulb._ip for bulb in self.bulbs)
-        if current_bulb_ips != found_bulb_ips:
-            logger.info('Different bulbs!')
-            logger.info('Found bulbs: %s', ', '.join(found_bulb_ips))
+        if current_bulb_ips == effective_bulb_ips:
+            logger.debug(
+                'Bulb inventory unchanged for %s after safe-IP merge: %s',
+                self.name, ', '.join(effective_bulb_ips),
+            )
+            return False
 
-            if YEELIGHT_STATIC_REBUILD:
-                logger.info('Statically rebuilding bulb list')
-                new_bulbs = [Bulb(ip, roomName=self.name) for ip in room_to_ips[self.name]]
-            else:
-                if YEELIGHT_USE_SAFE_BULBS:
-                    logger.info("Adding Safe bulbs")
-                    found_bulb_ips = sorted(set(found_bulb_ips) | set(safe_room_to_ips[self.name]))
-                new_bulbs = [Bulb(found_ip, roomName=self.name) for found_ip in found_bulb_ips]
+        logger.info('Different bulbs!')
+        logger.info('Effective bulbs for %s: %s', self.name, ', '.join(effective_bulb_ips))
+        logger.info(
+            'Inventory diff for %s: added=%s removed=%s',
+            self.name,
+            sorted(set(effective_bulb_ips) - set(current_bulb_ips)),
+            sorted(set(current_bulb_ips) - set(effective_bulb_ips)),
+        )
 
-            # Construct the replacement list before swapping it into the room so a
-            # discovery/constructor failure cannot leave the room with an empty list.
-            self.bulbs = new_bulbs
-            try:
-                self.resetFromLoggedState(include_IP_states=False)
-                return #TODO
-                if self.envState.phoneStatus:
-                    self.autoset(0, force=True)
-                else:
-                    self.resetFromLoggedState(include_IP_states=False)
-            except Exception:
-                logger.info(current_bulb_ips)
-                logger.exception('Got exception when restting bulbs in rebuild_bulbs')
+        if YEELIGHT_STATIC_REBUILD:
+            logger.info('Statically rebuilding bulb list')
+            new_bulbs = [Bulb(ip, roomName=self.name) for ip in effective_bulb_ips]
+        else:
+            existing_by_ip = {bulb._ip: bulb for bulb in self.bulbs}
+            new_bulbs = [
+                existing_by_ip.get(ip) or Bulb(ip, roomName=self.name)
+                for ip in effective_bulb_ips
+            ]
+
+        # Commit atomically after all new Bulb objects were constructed.
+        self.bulbs = new_bulbs
+        try:
+            self.resetFromLoggedState(include_IP_states=False)
+        except Exception:
+            logger.info(current_bulb_ips)
+            logger.exception('Got exception when resetting bulbs in rebuild_bulbs')
+        return True
 
     def writeState(self, newState, pcStatusOverride=None, phoneStatusOverride=None, source=None):
         "Write out the state of the bulbs in the room"

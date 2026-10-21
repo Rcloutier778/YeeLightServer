@@ -1,14 +1,17 @@
 import atexit
 import datetime
 from functools import wraps
+from itertools import count
 import json
 import logging
 import multiprocessing as mp
 import os
 import pickle
 import platform
+import queue
 import signal
 import sys
+import threading
 import time
 
 import yeelight
@@ -107,13 +110,18 @@ def main():
         logger.info("Command \"%s\" not found" % cmd)
 
 
-def rebuild_bulbs():
-    """Discover configured Yeelights once, then share the result with every room."""
-    discovered = sorted({
-        bulb['ip']
-        for bulb in yeelight.discover_bulbs(3)
-        if bulb.get('ip') in BULB_IPS
-    })
+def rebuild_bulbs(discovered_bulb_ips=None):
+    """Reconcile all rooms against one discovery result.
+
+    Pass ``discovered_bulb_ips`` when discovery has already run on the
+    background discovery worker; this function then performs no scan itself.
+    """
+    if discovered_bulb_ips is None:
+        discovered_bulb_ips = [
+            bulb['ip'] for bulb in yeelight.discover_bulbs(3)
+            if bulb.get('ip') in BULB_IPS
+        ]
+    discovered = sorted(set(discovered_bulb_ips) & set(BULB_IPS))
 
     if YEELIGHT_ROOM_HANDLES_REBUILD:
         for room in ROOMS.values():
@@ -124,9 +132,9 @@ def rebuild_bulbs():
         if current_bulbs_ips != discovered:
             new_ips = set(discovered) - set(current_bulbs_ips)
             missing_ips = set(current_bulbs_ips) - set(discovered)
-            for new_ip in new_ips:
+            for new_ip in sorted(new_ips):
                 logger.info('Found new bulb at ip addr: %s', new_ip)
-            for missing_ip in missing_ips:
+            for missing_ip in sorted(missing_ips):
                 logger.info('Missing bulb at ip addr: %s', missing_ip)
 
             bulbs = [Bulb(found_ip) for found_ip in discovered]
@@ -215,6 +223,37 @@ class Server(object):
 
         self.websocket_pipe, websocket_child_pipe = mp.Pipe()
         self.websocket_proc = mp.Process(target=websocketTest, args=(websocket_child_pipe,), daemon=True)
+
+        # All runtime bulb I/O and room recovery are serialized on a daemon
+        # worker, so a failed bulb cannot block the event loop from collecting
+        # switches/HTTP events or answering status requests from cached state.
+        self.control_queue = queue.PriorityQueue()
+        self.control_sequence = count()
+        self.control_stop = threading.Event()
+        self.control_thread = threading.Thread(
+            target=self._control_worker, name='yeelight-control-worker', daemon=True
+        )
+
+        # SSDP discovery runs separately from room recovery and normal control.
+        # A boolean pending flag coalesces multiple triggers received during a scan.
+        self.discovery_request_event = threading.Event()
+        self.discovery_stop = threading.Event()
+        self.discovery_lock = threading.Lock()
+        self.discovery_pending = False
+        self.discovery_thread = threading.Thread(
+            target=self._discovery_worker, name='yeelight-discovery-worker', daemon=True
+        )
+
+        self.status_refresh_lock = threading.Lock()
+        self.status_refresh_pending = set()
+        self.status_refresh_last_error = {}
+        self.status_refresh_last_started = {}
+        self.status_refresh_min_interval = 2.0
+        self.status_queue = queue.Queue()
+        self.status_stop = threading.Event()
+        self.status_thread = threading.Thread(
+            target=self._status_worker, name='yeelight-status-worker', daemon=True
+        )
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
 
     def graceful_shutdown(self, *args, **kwargs):
@@ -223,6 +262,10 @@ class Server(object):
         :return:
         """
         logger.info('Gracefully shutting down lights server')
+        self.discovery_stop.set()
+        self.discovery_request_event.set()
+        self.control_stop.set()
+        self.status_stop.set()
         for room in ROOMS.values():
             if room.influx_client is not None:
                 room.influx_client.close()
@@ -244,6 +287,287 @@ class Server(object):
             room.graceful_kill()
             
         sys.exit(0)
+
+    def _submit_control(self, label, func, *args, **kwargs):
+        """Queue one serialized control/recovery task without blocking the loop.
+
+        Lower priority numbers run first; an insertion counter preserves FIFO order
+        within a priority. User commands outrank maintenance and cache refreshes.
+        """
+        priority = kwargs.pop('_priority', 2)
+        self.control_queue.put((priority, next(self.control_sequence), label, func, args, kwargs))
+
+    def _control_worker(self):
+        while not self.control_stop.is_set():
+            try:
+                task = self.control_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            if task is None:
+                self.control_queue.task_done()
+                return
+            _, _, label, func, args, kwargs = task
+            try:
+                func(*args, **kwargs)
+            except Exception:
+                logger.exception('Background control task failed: %s', label)
+            finally:
+                self.control_queue.task_done()
+
+    def _request_bulb_discovery(self, reason='bulb event'):
+        with self.discovery_lock:
+            self.discovery_pending = True
+        self.discovery_request_event.set()
+        logger.debug('Queued background bulb discovery (%s)', reason)
+
+    def _discovery_worker(self):
+        while not self.discovery_stop.is_set():
+            self.discovery_request_event.wait()
+            self.discovery_request_event.clear()
+            if self.discovery_stop.is_set():
+                break
+
+            while not self.discovery_stop.is_set():
+                with self.discovery_lock:
+                    if not self.discovery_pending:
+                        break
+                    self.discovery_pending = False
+                try:
+                    discovered = sorted({
+                        bulb['ip']
+                        for bulb in yeelight.discover_bulbs(3)
+                        if bulb.get('ip') in BULB_IPS
+                    })
+                    logger.info(
+                        'Background bulb discovery completed; configured bulbs found: %s',
+                        ', '.join(discovered) if discovered else '<none>',
+                    )
+                    # Recovery can involve multiple property reads and retries;
+                    # enqueue it on the control worker rather than doing it here
+                    # or in the event loop.
+                    self._submit_control(
+                        'reconcile discovered bulb inventory',
+                        rebuild_bulbs,
+                        discovered,
+                        _priority=10,
+                    )
+                except Exception:
+                    logger.exception('Background bulb discovery failed')
+
+    def _cached_properties(self, room_name, properties):
+        """Return the most recently known properties without doing network I/O."""
+        room = ROOMS.get(room_name)
+        bulbs_in_room = list(room.bulbs) if room is not None else []
+        if not bulbs_in_room:
+            return {}
+        bulb = bulbs_in_room[0]
+        cache = getattr(bulb, '_last_properties', {})
+        # Keep the response shape stable. None explicitly means that property
+        # has not yet been observed; the refresh is queued after this response.
+        return {name: cache.get(name) for name in properties}
+
+    def _status_worker(self):
+        """Refresh property snapshots on an isolated thread using short-lived sockets.
+
+        Status polling must never hold up the serialized command/recovery worker.
+        A temporary Bulb instance gives the refresh its own socket, and that socket
+        is closed after the read so the request does not accumulate connections.
+        """
+        while not self.status_stop.is_set():
+            try:
+                task = self.status_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            room_names, properties = task
+            try:
+                self._refresh_status_cache(room_names, properties)
+            except Exception:
+                logger.exception('Unexpected background status-cache refresh failure')
+            finally:
+                self.status_queue.task_done()
+
+    def _refresh_status_cache(self, room_names, properties):
+        try:
+            for room_name in room_names:
+                room = ROOMS.get(room_name)
+                bulbs_in_room = list(room.bulbs) if room is not None else []
+                if not bulbs_in_room:
+                    continue
+                target = bulbs_in_room[0]
+                probe = Bulb(target._ip, roomName=room_name)
+                try:
+                    # This socket is independent of the command worker's socket.
+                    # A shorter timeout bounds time spent on an unresponsive bulb.
+                    sock = probe._socket
+                    sock.settimeout(1.5)
+                    fresh = probe.get_properties(list(properties), forceCall=True)
+                    latest_room = ROOMS.get(room_name)
+                    if latest_room is not None:
+                        current = next(
+                            (bulb for bulb in latest_room.bulbs if bulb._ip == target._ip),
+                            None,
+                        )
+                        if current is not None:
+                            current._last_properties.update(fresh)
+                            current._properties_cache_time = time.monotonic()
+                    self.status_refresh_last_error.pop(room_name, None)
+                except Exception as exc:
+                    now = time.monotonic()
+                    last = self.status_refresh_last_error.get(room_name, 0.0)
+                    if now - last >= 60:
+                        logger.warning(
+                            'Background status refresh failed for %s (%s): %s',
+                            room_name, target._ip, exc,
+                        )
+                        self.status_refresh_last_error[room_name] = now
+                finally:
+                    try:
+                        probe._discard_socket()
+                    except Exception:
+                        pass
+        finally:
+            with self.status_refresh_lock:
+                for room_name in room_names:
+                    self.status_refresh_pending.discard(room_name)
+
+    def _schedule_status_refresh(self, room_names, properties):
+        if not properties:
+            return
+        to_refresh = []
+        now = time.monotonic()
+        with self.status_refresh_lock:
+            for room_name in room_names:
+                if room_name in self.status_refresh_pending:
+                    continue
+                last = self.status_refresh_last_started.get(room_name, float('-inf'))
+                if now - last < self.status_refresh_min_interval:
+                    continue
+                self.status_refresh_pending.add(room_name)
+                self.status_refresh_last_started[room_name] = now
+                to_refresh.append(room_name)
+        if to_refresh:
+            self.status_queue.put((tuple(to_refresh), tuple(properties)))
+
+    def _handle_dashboard_query(self, http_res):
+        if http_res.get('query') != 'getProperty':
+            return
+        logger.info('dashboard-query getProperty (cached response)')
+        room_name = http_res.get('room')
+        properties = list(http_res.get('properties', ()))
+        if room_name == 'global':
+            result = {
+                name: self._cached_properties(name, properties)
+                for name in ROOMS
+            }
+            rooms_to_refresh = list(ROOMS)
+        elif room_name in ROOMS:
+            result = self._cached_properties(room_name, properties)
+            rooms_to_refresh = [room_name]
+        else:
+            logger.error('Unknown room in dashboard query: %s', room_name)
+            result = {}
+            rooms_to_refresh = []
+        # Reply immediately; do not make HTTP status polling wait on a bulb socket.
+        self.http_pipe.send(result)
+        self._schedule_status_refresh(rooms_to_refresh, properties)
+
+    def _process_ping_result(self, phone_status, pc_status, ping_res):
+        self.envState.phoneStatus = phone_status
+        self.envState.pcStatus = pc_status
+        self.ping_res = ping_res
+        if ping_res:
+            global_action('on')
+            global_action('autoset', force=True)
+            writeManualOverride()
+            global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
+        else:
+            # Temp fix for PC not having a valid IP address on waking from sleep.
+            sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p').time()
+            now_time = datetime.datetime.now().time()
+            sunrise_end = (
+                datetime.datetime.combine(datetime.date.today(), sunrise_time)
+                + datetime.timedelta(hours=1)
+            ).time()
+            if not (sunrise_time <= now_time <= sunrise_end):
+                global_action('off', force=True)
+                writeManualOverride(offset=datetime.timedelta(days=30))
+                global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
+
+    def _process_switch_request(self, switch_room, switch_action):
+        logger.info('Switch in %s hit for %s', switch_room, switch_action)
+        kwargs = (
+            {'autosetDuration': SWITCH_FLOW_DURATION, 'force': True, 'forceLight': True}
+            if switch_action == 'autoset' else {}
+        )
+        if switch_action in COMMANDS_WITH_DURATION:
+            kwargs['duration'] = SWITCH_FLOW_DURATION
+        getattr(ROOMS[switch_room], switch_action)(**kwargs)
+        writeManualOverride(
+            switch_room,
+            datetime.timedelta(hours=2),
+            action=('MANUAL_AUTOSET_FORCE_LIGHT' if switch_action == 'autoset' else switch_action),
+        )
+
+    def _process_http_request(self, http_res):
+        logger.info('http')
+        logger.info(http_res)
+        if http_res['eventType'] == HTTP_EVENT_FROM_PC:
+            global_action('writeState', http_res['action'])
+            if not SERVER_ACTS_NOT_CLIENT:
+                logger.info('Manual http event, no further action taken')
+                return
+
+        if http_res['eventType'] in ('dashboard-action', 'zigbee', 'zigbeeSwitch') or (
+            SERVER_ACTS_NOT_CLIENT and http_res['eventType'] == HTTP_EVENT_FROM_PC
+        ):
+            action = http_res['action']
+            if action not in bulbCommands:
+                logger.error('Received %s as a command, which is not a valid command!', action)
+                return
+            kwargs = dict(http_res.get('kwargs', {}))
+            if action in COMMANDS_WITH_DURATION:
+                kwargs['duration'] = SWITCH_FLOW_DURATION
+            if action == 'autoset':
+                kwargs['force'] = True
+                kwargs['autosetDuration'] = 3000
+                if http_res['eventType'] == 'zigbeeSwitch':
+                    kwargs['forceLight'] = True
+                    kwargs['autosetDuration'] = SWITCH_FLOW_DURATION
+
+            room_name = http_res['room']
+            if room_name == 'global':
+                logger.info('global http')
+                global_action(action, **kwargs)
+            elif room_name in ROOMS:
+                logger.info('Room level http')
+                getattr(ROOMS[room_name], action)(**kwargs)
+            else:
+                logger.error('Received unknown HTTP room %s', room_name)
+                return
+
+            if http_res['eventType'] in ('dashboard-action', 'zigbeeSwitch') or (
+                SERVER_ACTS_NOT_CLIENT and http_res['eventType'] == HTTP_EVENT_FROM_PC
+            ):
+                writeManualOverride(
+                    room_name if room_name != 'global' else None,
+                    datetime.timedelta(hours=2),
+                    action=('MANUAL_AUTOSET_FORCE_LIGHT' if action == 'autoset' else action),
+                )
+
+    def _process_timer_wake(self, timer_wake):
+        logger.info('Timer wake')
+        if not (self.envState.phoneStatus and self.envState.pcStatus):
+            logger.info(
+                'Phone(%s) and/or pc(%s) is offline, keeping lights off.',
+                str(self.envState.phoneStatus), str(self.envState.pcStatus),
+            )
+            global_action('off', auto=True)
+        else:
+            global_action(
+                'autoset',
+                AUTOSET_DURATION if timer_wake else 300,
+                autoset_auto_var=not timer_wake,
+            )
 
     def wake_predicate(self):
         """
@@ -321,9 +645,14 @@ class Server(object):
                 self.switch_event, self.switch_pipe, 'switch', acknowledge=True
             )
 
-            # Have server beep
+            # Run the shell/console notification off the event-loop thread.
             if self.switch_requests:
-                os.system("sudo sh -c \"echo -e '\\a' > /dev/console\"")
+                self._submit_control(
+                    'switch notification beep',
+                    os.system,
+                    "sudo sh -c \"echo -e '\\a' > /dev/console\"",
+                    _priority=9,
+                )
             for switch_room, switch_action in self.switch_requests:
                 try:
                     self.websocket_pipe.send((switch_room, switch_action))
@@ -338,11 +667,12 @@ class Server(object):
             )
 
     def run(self):
-        """
-        Runs the server
-        :return:
-        """
-        logger.error("Booting server")
+        """Run the event loop; slow discovery and bulb work run on daemon workers."""
+        logger.error('Booting server')
+        self.control_thread.start()
+        self.discovery_thread.start()
+        self.status_thread.start()
+
         if USE_MONITOR_ADVERT_BULBS:
             self.monitor_bulb_advert_proc.start()
         if USE_MONITOR_BULB_STATIC:
@@ -353,13 +683,10 @@ class Server(object):
         self.monitor_switches_proc.start()
         self.http_proc.start()
         self.websocket_proc.start()
+
         systemStartTime = datetime.datetime.utcnow()
-        try:
-            global_action('autoset', force=True)
-        except Exception:
-            logger.exception("Got exception when doing run_server first autoset, ignoring...")
-        # A normal iteration waits on wake_condition, so repeated sub-10ms
-        # iterations indicate a stale wake flag or another unexpected spin.
+        self._submit_control('initial autoset', global_action, 'autoset', force=True, _priority=0)
+
         rapid_loop_count = 0
         last_spin_warning = 0.0
         while True:
@@ -377,43 +704,28 @@ class Server(object):
                     self.wake_condition.wait_for(self.wake_predicate, self.TIMEOUT_INTERVAL)
                     if self.wake_predicate():
                         self.resolve_wake()
-                logger.info("Woke up")
+
+                logger.info('Woke up')
                 event_processed = bool(
                     self.bulb_wake or self.ping_results or self.switch_requests or self.http_requests
                 )
 
                 if self.bulb_wake:
-                    try:
-                        rebuild_bulbs()
-                    except Exception:
-                        logger.exception('Exception while rebuilding bulbs from wake event')
+                    # No UDP discovery or bulb recovery on the event-loop thread.
+                    self._request_bulb_discovery('monitor event')
 
-                for phoneStatus, pcStatus, ping_res in self.ping_results:
+                for phone_status, pc_status, ping_res in self.ping_results:
                     self.timer_wake = False
-                    self.envState.phoneStatus = phoneStatus
-                    self.envState.pcStatus = pcStatus
-                    self.ping_res = ping_res
-                    if ping_res:
-                        global_action('on')
-                        global_action('autoset', force=True)
-                        writeManualOverride()
-                        global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
-                    else:
-                        # Temp fix for PC not having a valid IP address on waking from sleep.
-                        sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p').time()
-                        now_time = datetime.datetime.now().time()
-                        sunrise_end = (
-                            datetime.datetime.combine(datetime.date.today(), sunrise_time)
-                            + datetime.timedelta(hours=1)
-                        ).time()
-                        if not (sunrise_time <= now_time <= sunrise_end):
-                            global_action('off', force=True)
-                            writeManualOverride(offset=datetime.timedelta(days=30))
-                            global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
+                    self._submit_control(
+                        'process presence change',
+                        self._process_ping_result,
+                        phone_status, pc_status, ping_res,
+                        _priority=0,
+                    )
 
                 for switch_room, switch_action in self.switch_requests:
                     if switch_room == SWITCH_RESTART_KEYWORD:
-                        logger.info("Got restart request from switch handler")
+                        logger.info('Got restart request from switch handler')
                         self.monitor_switches_proc.kill()
                         self.switch_pipe.close()
                         self.switch_event = mp.Event()
@@ -429,108 +741,54 @@ class Server(object):
                     if switch_room not in ROOMS:
                         logger.error(
                             'Received %s from switch_room, which is not in %s',
-                            switch_room, ', '.join(ROOMS)
+                            switch_room, ', '.join(ROOMS),
                         )
                         continue
-
-                    logger.info('Switch in %s hit for %s', switch_room, switch_action)
-                    kwargs = (
-                        {'autosetDuration': SWITCH_FLOW_DURATION, 'force': True, 'forceLight': True}
-                        if switch_action == 'autoset' else {}
-                    )
-                    if switch_action in COMMANDS_WITH_DURATION:
-                        kwargs['duration'] = SWITCH_FLOW_DURATION
-                    getattr(ROOMS[switch_room], switch_action)(**kwargs)
-                    writeManualOverride(
-                        switch_room,
-                        datetime.timedelta(hours=2),
-                        action=('MANUAL_AUTOSET_FORCE_LIGHT' if switch_action == 'autoset' else switch_action)
+                    # Queue the action in arrival order. Pipe acknowledgements are
+                    # already sent during drain, so the switch monitor is not held
+                    # open while the bulbs are being controlled or recovered.
+                    self._submit_control(
+                        'switch command %s/%s' % (switch_room, switch_action),
+                        self._process_switch_request,
+                        switch_room, switch_action,
+                        _priority=0,
                     )
 
                 for http_res in self.http_requests:
-                    logger.info('http')
-                    logger.info(http_res)
-                    if http_res['eventType'] == HTTP_EVENT_FROM_PC:
-                        global_action('writeState', http_res["action"])
-                        if not SERVER_ACTS_NOT_CLIENT:
-                            logger.info('Manual http event, no further action taken')
-                            continue
-                    if http_res['eventType'] in ('dashboard-action', 'zigbee', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and http_res['eventType'] == HTTP_EVENT_FROM_PC):
-                        if http_res['action'] not in bulbCommands:
-                            logger.error('Received %s as a command, which is not a valid command!', http_res['action'])
-                            continue
-                        if http_res['action'] in COMMANDS_WITH_DURATION:
-                            http_res['kwargs']['duration'] = SWITCH_FLOW_DURATION
-                        if http_res['action'] == 'autoset':
-                            http_res['kwargs']['force'] = True
-                            http_res['kwargs']['autosetDuration'] = 3000
-                            if http_res['eventType'] == 'zigbeeSwitch':
-                                http_res['kwargs']['forceLight'] = True
-                                http_res['kwargs']['autosetDuration'] = SWITCH_FLOW_DURATION
-                        if http_res['room'] == 'global':
-                            logger.info('global http')
-                            global_action(http_res['action'], **http_res['kwargs'])
-                        elif http_res['room'] in ROOMS:
-                            logger.info('Room level http')
-                            getattr(ROOMS[http_res['room']], http_res['action'])(**http_res['kwargs'])
-                        else:
-                            logger.error('Received unknown HTTP room %s', http_res['room'])
-                            continue
-
-                        if http_res['eventType'] in ('dashboard-action', 'zigbeeSwitch') or (SERVER_ACTS_NOT_CLIENT and http_res['eventType'] == HTTP_EVENT_FROM_PC):
-                            writeManualOverride(
-                                http_res['room'] if http_res['room'] != 'global' else None,
-                                datetime.timedelta(hours=2),
-                                action=('MANUAL_AUTOSET_FORCE_LIGHT' if http_res['action'] == 'autoset' else http_res['action'])
-                            )
-                    elif http_res['eventType'] == 'dashboard-query':
-                        logger.info('dashboard-query')
-                        if http_res['query'] == 'getProperty':
-                            logger.info('getProperty')
-                            room_name = http_res['room']
-                            properties = list(http_res.get('properties', ()))
-                            if room_name == 'global':
-                                tmp_res = {}
-                                for room_name, room_bulbs in ROOMS.items():
-                                    tmp_res[room_name] = room_bulbs.bulbs[0].get_properties(properties)
-                                self.http_pipe.send(tmp_res)
-                            else:
-                                if room_name not in ROOMS:
-                                    logger.error('Unknown room: %s', room_name)
-                                    self.http_pipe.send({})
-                                    continue
-
-                                tmp_bulbs = ROOMS[room_name].bulbs
-                                if tmp_bulbs:
-                                    self.http_pipe.send(tmp_bulbs[0].get_properties(properties))
-                                else:
-                                    self.http_pipe.send({})
+                    if http_res.get('eventType') == 'dashboard-query':
+                        # Queries return cached values immediately and refresh them
+                        # asynchronously through the same serialized bulb worker.
+                        self._handle_dashboard_query(http_res)
+                    else:
+                        # Copy nested kwargs because the handler applies defaults.
+                        queued_http = dict(http_res)
+                        queued_http['kwargs'] = dict(http_res.get('kwargs', {}))
+                        self._submit_control(
+                            'HTTP command %s/%s' % (queued_http.get('room'), queued_http.get('action')),
+                            self._process_http_request,
+                            queued_http,
+                            _priority=0,
+                        )
 
                 if not event_processed:
                     self.ping_res = None
                     self.switch_room, self.switch_action = None, None
                     self.http_res = None
-                    logger.info('Timer wake')
-                    if not (self.envState.phoneStatus and self.envState.pcStatus):
-                        logger.info("Phone(%s) and/or pc(%s) is offline, keeping lights off.", str(self.envState.phoneStatus), str(self.envState.pcStatus))
-                        global_action('off', auto=True)
-                    else:
-                        global_action('autoset', AUTOSET_DURATION if self.timer_wake else 300, autoset_auto_var=not self.timer_wake)
+                    self._submit_control(
+                        'timer autoset/off', self._process_timer_wake, self.timer_wake,
+                        _priority=2,
+                    )
 
                 if (systemStartTime + datetime.timedelta(days=3)) < datetime.datetime.utcnow():
                     systemStartTime = datetime.datetime.utcnow()
                     set_IRL_sunset()
 
-
-
             except Exception:
-                logger.exception("Exception in server run loop!")
-                try:
-                    rebuild_bulbs()
-                except Exception:
-                    logger.exception("Bulb rebuild after server-loop error also failed")
-                # Avoid repeatedly retrying a failing iteration at full speed.
-                time.sleep(0.25)
+                logger.exception('Exception in server run loop!')
+                # Error recovery is also asynchronous; don't perform a three-second
+                # discovery and bulb state restoration inside this loop.
+                self._request_bulb_discovery('event-loop exception')
+                time.sleep(0.05)
             finally:
                 elapsed = time.monotonic() - loop_started
                 if elapsed < 0.01:
@@ -542,15 +800,12 @@ class Server(object):
                     now_monotonic = time.monotonic()
                     if now_monotonic - last_spin_warning >= 60:
                         logger.error(
-                            "Main loop spin guard activated: 20 consecutive iterations "
-                            "completed in under 10ms (ping=%s bulb=%s switch=%s http=%s)",
-                            self.ping_event.is_set(),
-                            self.bulb_event.is_set(),
-                            self.switch_event.is_set(),
-                            self.http_event.is_set(),
+                            'Main loop spin guard activated: 20 consecutive iterations '
+                            'completed in under 10ms (ping=%s bulb=%s switch=%s http=%s)',
+                            self.ping_event.is_set(), self.bulb_event.is_set(),
+                            self.switch_event.is_set(), self.http_event.is_set(),
                         )
                         last_spin_warning = now_monotonic
-                    # Keep a stale/spurious wake condition from consuming a core.
                     time.sleep(0.05)
                     rapid_loop_count = 0
 
