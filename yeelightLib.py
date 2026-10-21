@@ -6,6 +6,7 @@ import math
 import os
 import pickle
 import time
+import threading
 import yeelight
 import yeelight.aio
 from logging.handlers import RotatingFileHandler
@@ -332,6 +333,10 @@ class Bulb(yeelight.Bulb):
     def __init__(self, *args, roomName='', **kwargs):
         self.roomName = roomName
         self._properties_cache_time = 0.0
+        # The synchronous Yeelight client shares one socket per Bulb instance.
+        # Protect its cache and full send/receive transactions from concurrent
+        # room-control threads so responses cannot be consumed by the wrong caller.
+        self._command_lock = threading.RLock()
         super().__init__(*args, **kwargs)
 
     def __repr__(self):
@@ -350,7 +355,24 @@ class Bulb(yeelight.Bulb):
         # ``_Bulb__socket`` attribute. Reset it so a future command reconnects.
         self._Bulb__socket = None
 
+    def _notify_room_state_observer(self, event, **details):
+        """Notify the owning Room without allowing a callback to break bulb I/O."""
+        observer = getattr(self, '_room_state_observer', None)
+        if observer is None:
+            return
+        try:
+            observer(self, event, **details)
+        except Exception:
+            logging.getLogger('yeelight').debug(
+                'Room state observer failed for %s', self, exc_info=True
+            )
+
     def send_command(self, method, params=None):
+        """Serialize a complete command/response transaction on this bulb socket."""
+        with self._command_lock:
+            return self._send_command_locked(method, params)
+
+    def _send_command_locked(self, method, params=None):
         """Send a command, treating a clean socket EOF as a failed command.
 
         The upstream synchronous client loops while waiting for a response but
@@ -373,7 +395,9 @@ class Bulb(yeelight.Bulb):
             ) from exc
 
         if self._music_mode:
-            return {'result': ['ok']}
+            response = {'result': ['ok']}
+            self._notify_room_state_observer('command', method=method, params=params)
+            return response
 
         response = None
         while response is None:
@@ -405,6 +429,9 @@ class Bulb(yeelight.Bulb):
                     response = line
                 else:
                     self._last_properties.update(line['params'])
+                    self._notify_room_state_observer(
+                        'properties', properties=line['params']
+                    )
 
         if (
             method == 'set_music'
@@ -418,22 +445,28 @@ class Bulb(yeelight.Bulb):
         if 'error' in response:
             raise yeelight.BulbException(response['error'])
 
+        self._notify_room_state_observer('command', method=method, params=params)
         return response
 
     def get_properties(self, requested_properties=yeelight.main.DEFAULT_PROPS, ssdp_fallback=False, forceCall=False):
-        cache_expired = (time.monotonic() - self._properties_cache_time) >= PROPERTY_CACHE_TTL
-        needs_refresh = (
-            USE_GET_PROPERTIES
-            or not self._last_properties
-            or forceCall
-            or cache_expired
-            or any(rp not in self._last_properties for rp in requested_properties)
-        )
-        if needs_refresh:
-            result = super().get_properties(requested_properties, ssdp_fallback)
-            self._properties_cache_time = time.monotonic()
+        # Guard cache access and a possible network refresh as one operation. This
+        # is a re-entrant lock because the upstream getter calls self.send_command().
+        with self._command_lock:
+            cache_expired = (time.monotonic() - self._properties_cache_time) >= PROPERTY_CACHE_TTL
+            needs_refresh = (
+                USE_GET_PROPERTIES
+                or not self._last_properties
+                or forceCall
+                or cache_expired
+                or any(rp not in self._last_properties for rp in requested_properties)
+            )
+            if needs_refresh:
+                result = super().get_properties(requested_properties, ssdp_fallback)
+                self._properties_cache_time = time.monotonic()
+            else:
+                result = {rp: self._last_properties[rp] for rp in requested_properties}
+            self._notify_room_state_observer('properties', properties=result)
             return result
-        return {rp: self._last_properties[rp] for rp in requested_properties}
 
 
 # Retry only errors that plausibly represent transient device/network conditions.

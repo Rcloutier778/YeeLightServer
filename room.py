@@ -58,6 +58,21 @@ class Room:
         self.name = name
         self.envState = envState
 
+        # Dashboard state is owned by the Room. It is updated only when normal
+        # control/property-read code observes or successfully sends a bulb change;
+        # the SSE worker reads this dictionary and never queries bulbs itself.
+        self._dashboard_state_lock = threading.RLock()
+        self._dashboard_state = {
+            'power': None,
+            'bright': None,
+            'ct': None,
+            'current_brightness': None,
+        }
+        self._dashboard_state_updated_at = 0.0
+        for bulb in self.bulbs:
+            self._attach_bulb_state_observer(bulb)
+        self._seed_dashboard_state_from_first_bulb()
+
         if not os.path.exists(ROOM_STATES_DIR):
             os.mkdir(ROOM_STATES_DIR)
         self.room_dir = ROOM_DIR.format(room=self.name)
@@ -86,6 +101,95 @@ class Room:
 
         logger.info('Room %s has %s bulbs', self.name, ', '.join(sorted(b._ip for b in self.bulbs)))
 
+
+    _DASHBOARD_PROPERTIES = ('power', 'bright', 'ct')
+
+    def _attach_bulb_state_observer(self, bulb):
+        """Let the existing Bulb report successful commands and observed props."""
+        # Bulb invokes this callback after successful send/receive transactions or
+        # successful get_properties() calls. Only the current first bulb contributes
+        # to the room dashboard, matching the existing dashboard semantics.
+        bulb._room_state_observer = self._observe_bulb_state
+        return bulb
+
+    def _seed_dashboard_state_from_first_bulb(self):
+        if not self.bulbs:
+            return
+        bulb = self.bulbs[0]
+        cached = getattr(bulb, '_last_properties', {})
+        self._update_dashboard_state({
+            key: cached[key] for key in self._DASHBOARD_PROPERTIES if key in cached
+        }, source_bulb=bulb)
+
+    def _update_dashboard_state(self, properties, source_bulb=None):
+        if not isinstance(properties, dict) or not properties:
+            return
+        # Ignore callbacks from objects replaced by a room inventory rebuild.
+        if source_bulb is not None and (not self.bulbs or self.bulbs[0] is not source_bulb):
+            return
+        changed = False
+        with self._dashboard_state_lock:
+            for key in self._DASHBOARD_PROPERTIES:
+                value = properties.get(key)
+                if value is None:
+                    continue
+                value = str(value)
+                if self._dashboard_state.get(key) != value:
+                    self._dashboard_state[key] = value
+                    changed = True
+                if key == 'bright' and self._dashboard_state.get('current_brightness') != value:
+                    self._dashboard_state['current_brightness'] = value
+                    changed = True
+            if changed:
+                self._dashboard_state_updated_at = time.monotonic()
+
+    def _observe_bulb_state(self, bulb, event, **details):
+        """Update dashboard data without performing any additional I/O."""
+        if not self.bulbs or self.bulbs[0] is not bulb:
+            return
+
+        if event == 'properties':
+            self._update_dashboard_state(details.get('properties', {}), source_bulb=bulb)
+            return
+
+        if event != 'command':
+            return
+
+        method = details.get('method') or ''
+        params = details.get('params') or []
+        updates = {}
+        # These are successful Yeelight commands, so the dashboard may reflect
+        # their requested state immediately without waiting for another read.
+        if method in ('set_power', 'bg_set_power') and params:
+            updates['power'] = params[0]
+        elif method in ('set_bright', 'bg_set_bright') and params:
+            updates['bright'] = params[0]
+        elif method in ('set_ct_abx', 'bg_set_ct_abx') and params:
+            updates['ct'] = params[0]
+            updates['power'] = 'on'
+        elif method == 'set_scene' and params:
+            scene = str(params[0]).lower()
+            if scene == 'ct' and len(params) >= 3:
+                updates.update(power='on', ct=params[1], bright=params[2])
+            elif scene == 'color' and len(params) >= 3:
+                updates.update(power='on', bright=params[2])
+            elif scene == 'hsv' and len(params) >= 4:
+                updates.update(power='on', bright=params[3])
+            elif scene == 'auto_delay_off':
+                updates['power'] = 'on'
+        elif method in ('set_rgb', 'set_hsv', 'start_cf') or method.startswith('bg_set_rgb'):
+            updates['power'] = 'on'
+        if updates:
+            self._update_dashboard_state(updates, source_bulb=bulb)
+
+    def get_dashboard_properties(self, properties=None):
+        """Return a consistent copy of known properties; perform no bulb I/O."""
+        requested = tuple(properties or self._DASHBOARD_PROPERTIES)
+        with self._dashboard_state_lock:
+            snapshot = dict(self._dashboard_state)
+        if snapshot.get('current_brightness') is None:
+            snapshot['current_brightness'] = snapshot.get('bright')
+        return {key: snapshot.get(key) for key in requested}
 
     def listen_for_bulb_updates(self):
         res = {}
@@ -161,8 +265,25 @@ class Room:
                 for ip in effective_bulb_ips
             ]
 
+        # Attach state observers before committing the new inventory. Existing
+        # instances are retained when their IP remains present.
+        for bulb in new_bulbs:
+            self._attach_bulb_state_observer(bulb)
+        # If the representative (first) bulb changes, clear its old values before
+        # seeding from the new representative so the dashboard can't report stale
+        # state from a different bulb.
+        old_first = self.bulbs[0] if self.bulbs else None
+        new_first = new_bulbs[0] if new_bulbs else None
         # Commit atomically after all new Bulb objects were constructed.
         self.bulbs = new_bulbs
+        if old_first is not new_first:
+            with self._dashboard_state_lock:
+                self._dashboard_state = {
+                    'power': None, 'bright': None, 'ct': None,
+                    'current_brightness': None,
+                }
+                self._dashboard_state_updated_at = 0.0
+        self._seed_dashboard_state_from_first_bulb()
         try:
             self.resetFromLoggedState(include_IP_states=False)
         except Exception:
@@ -338,6 +459,21 @@ class Room:
                     outcomes.append((bulb, None, exc))
         return outcomes
 
+    def _extract_dashboard_properties(self, value):
+        """Extract known property fields from the result of a normal operation."""
+        if isinstance(value, dict):
+            return {
+                key: value[key]
+                for key in self._DASHBOARD_PROPERTIES
+                if key in value and value[key] is not None
+            }
+        if isinstance(value, (list, tuple)):
+            for item in reversed(value):
+                observed = self._extract_dashboard_properties(item)
+                if observed:
+                    return observed
+        return {}
+
     def applyFuncAndRebuild(self, func, selectBulbIps=None):
         """Apply ``func`` to selected bulbs concurrently, rebuilding failures.
 
@@ -367,6 +503,18 @@ class Room:
             for (bulb_idx, bulb), (_, value, error) in zip(batch, outcomes):
                 if error is None:
                     results[bulb_idx] = value
+                    # Property reads are already part of normal room operations.
+                    # Feed their results into the Room-owned dashboard snapshot when
+                    # they target the first bulb; no extra request is performed.
+                    if bulb_idx == 0 and self.bulbs and self.bulbs[0] is bulb:
+                        observed = self._extract_dashboard_properties(value)
+                        if observed:
+                            self._update_dashboard_state(observed, source_bulb=bulb)
+                        cached = getattr(bulb, '_last_properties', {})
+                        self._update_dashboard_state(
+                            {key: cached[key] for key in self._DASHBOARD_PROPERTIES if key in cached},
+                            source_bulb=bulb,
+                        )
                     continue
 
                 logger.error(
@@ -378,6 +526,7 @@ class Room:
                 )
                 # Keep list mutation and Bulb construction out of worker threads.
                 new_bulb = Bulb(bulb._ip, roomName=self.name)
+                self._attach_bulb_state_observer(new_bulb)
                 self.bulbs[bulb_idx] = new_bulb
                 next_pending[bulb_idx] = new_bulb
 
@@ -402,6 +551,8 @@ class Room:
     def brightness(self, val):
         bulbLog.info('Brightness = %d', val)
         self.applyFuncAndRebuild(lambda bulb: bulb.set_brightness(val))
+        if self.bulbs:
+            self._update_dashboard_state({'bright': val}, source_bulb=self.bulbs[0])
 
     def day(self, duration=3000, auto=False):
         if UNIFIED_AUTO_ON and not auto:
@@ -467,6 +618,14 @@ class Room:
             lambda bulb: self._threaded_set_scene(bulb, temperature, brightness),
             bulbs=eligible_bulbs,
         )
+        first_bulb = self.bulbs[0] if self.bulbs else None
+        if first_bulb is not None:
+            first_outcome = next((item for item in outcomes if item[0] is first_bulb), None)
+            if first_outcome is not None and first_outcome[2] is None:
+                self._update_dashboard_state(
+                    {'power': 'on', 'ct': temperature, 'bright': brightness},
+                    source_bulb=first_bulb,
+                )
         errors = [(bulb._ip, error) for bulb, _, error in outcomes if error is not None]
 
         if errors:
@@ -490,6 +649,8 @@ class Room:
         # slow or temporarily unreachable.
         assert f in ('on', 'off')
         self.applyFuncAndRebuild(lambda i: i.turn_off() if f == 'off' else i.turn_on())
+        if self.bulbs:
+            self._update_dashboard_state({'power': f}, source_bulb=self.bulbs[0])
 
         max_attempts = 5
         for attempt in range(max_attempts):
@@ -577,6 +738,8 @@ class Room:
                 )
             )
         )
+        if self.bulbs:
+            self._update_dashboard_state({'power': 'on'}, source_bulb=self.bulbs[0])
 
 
     def _threadedColorTempFlow(self, bulb, transition):
@@ -620,6 +783,14 @@ class Room:
 
         outcomes = self._runConcurrently(run_bulb)
         errors = [(bulb._ip, error) for bulb, _, error in outcomes if error is not None]
+        first_bulb = self.bulbs[0] if self.bulbs else None
+        if first_bulb is not None:
+            first_outcome = next((item for item in outcomes if item[0] is first_bulb), None)
+            if first_outcome is not None and first_outcome[2] is None:
+                self._update_dashboard_state(
+                    {'power': 'on', 'ct': temperature, 'bright': brightness},
+                    source_bulb=first_bulb,
+                )
         if errors:
             for ip, exc in errors:
                 logger.error(
@@ -940,6 +1111,13 @@ class Room:
                     )
                 )
             )
+            if self.bulbs:
+                # The bulb executes this flow internally. Record its requested end
+                # state now; property reads/observations can refine it later.
+                self._update_dashboard_state(
+                    {'power': 'on', 'ct': DAY_COLOR, 'bright': DAY_BRIGHTNESS},
+                    source_bulb=self.bulbs[0],
+                )
             logger.info('Sunrise Flowing')
 
         except Exception:

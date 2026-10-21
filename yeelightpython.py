@@ -249,20 +249,11 @@ class Server(object):
             target=self._discovery_worker, name='yeelight-discovery-worker', daemon=True
         )
 
-        self.status_refresh_lock = threading.Lock()
-        self.status_refresh_pending = set()
-        self.status_refresh_last_error = {}
-        self.status_refresh_last_started = {}
-        self.status_refresh_min_interval = 1.5
-        self.status_queue = queue.Queue()
         self.status_stop = threading.Event()
         # The HTTP process receives snapshots through this separate channel;
-        # persistent SSE handlers never share the command/property pipe.
+        # the watcher only checks Room-owned dictionaries and performs no bulb I/O.
         self.status_push_lock = threading.Lock()
         self.last_pushed_snapshot = None
-        self.status_thread = threading.Thread(
-            target=self._status_worker, name='yeelight-status-worker', daemon=True
-        )
         self.status_push_thread = threading.Thread(
             target=self._status_push_refresh_scheduler,
             name='yeelight-status-push-scheduler', daemon=True,
@@ -305,7 +296,7 @@ class Server(object):
         """Queue one serialized control/recovery task without blocking the loop.
 
         Lower priority numbers run first; an insertion counter preserves FIFO order
-        within a priority. User commands outrank maintenance and cache refreshes.
+        within a priority. User commands outrank maintenance and inventory recovery.
         """
         priority = kwargs.pop('_priority', 2)
         self.control_queue.put((priority, next(self.control_sequence), label, func, args, kwargs))
@@ -368,52 +359,42 @@ class Server(object):
                     logger.exception('Background bulb discovery failed')
 
     def _cached_properties(self, room_name, properties):
-        """Return the most recently known properties without doing network I/O."""
+        """Return the Room-owned state snapshot; do not query a bulb."""
         room = ROOMS.get(room_name)
-        bulbs_in_room = list(room.bulbs) if room is not None else []
-        if not bulbs_in_room:
+        if room is None:
             return {}
-        bulb = bulbs_in_room[0]
-        cache = getattr(bulb, '_last_properties', {})
-        # Keep the response shape stable. None explicitly means that property
-        # has not yet been observed; the refresh is queued after this response.
-        return {name: cache.get(name) for name in properties}
+        return room.get_dashboard_properties(properties)
 
     def _status_push_refresh_scheduler(self):
-        """Refresh bulb properties server-side and push only changed snapshots.
-
-        The Android app no longer needs to poll the HTTP status endpoint. This
-        scheduler observes real bulb changes (including changes made elsewhere)
-        and the HTTP process sends updates only when this snapshot changes.
-        """
-        properties = ('power', 'bright', 'ct')
+        """Watch Room snapshots and push changes, without querying any bulbs."""
         while not self.status_stop.is_set():
-            self._schedule_status_refresh(tuple(ROOMS), properties)
-            if self.status_stop.wait(2.0):
+            try:
+                self._publish_status_snapshot()
+            except Exception:
+                logger.exception('Could not inspect Room dashboard snapshots for SSE')
+            # This is an in-memory dictionary check only; no socket or IPC operation.
+            if self.status_stop.wait(0.2):
                 break
 
     def _publish_status_snapshot(self):
-        """Send a JSON-ready snapshot to the separate HTTP process if changed."""
+        """Publish changed Room-owned snapshots through the separate HTTP queue."""
         snapshot = {}
-        for room_name in ROOMS:
-            room = ROOMS.get(room_name)
-            bulbs_in_room = list(room.bulbs) if room is not None else []
-            if not bulbs_in_room:
+        for room_name, room in ROOMS.items():
+            if room is None:
                 continue
-            cache = getattr(bulbs_in_room[0], '_last_properties', {})
-            power = cache.get('power')
-            bright = cache.get('bright')
-            ct = cache.get('ct')
-            # Avoid sending an incomplete room as if it were valid UI status.
-            if power is None or bright is None or ct is None:
+            values = room.get_dashboard_properties(
+                ('power', 'bright', 'ct', 'current_brightness')
+            )
+            # Don't publish an incomplete room as if it were valid UI status.
+            if any(values.get(key) is None for key in ('power', 'bright', 'ct')):
                 continue
-            current_brightness = cache.get('current_brightness')
+            current_brightness = values.get('current_brightness')
             if current_brightness is None:
-                current_brightness = bright
+                current_brightness = values.get('bright')
             snapshot[room_name] = {
-                'power': str(power),
-                'bright': str(bright),
-                'ct': str(ct),
+                'power': str(values['power']),
+                'bright': str(values['bright']),
+                'ct': str(values['ct']),
                 'current_brightness': str(current_brightness),
             }
 
@@ -441,93 +422,10 @@ class Server(object):
                 return
             self.last_pushed_snapshot = snapshot
 
-    def _status_worker(self):
-        """Refresh property snapshots on an isolated thread using short-lived sockets.
-
-        Status polling must never hold up the serialized command/recovery worker.
-        A temporary Bulb instance gives the refresh its own socket, and that socket
-        is closed after the read so the request does not accumulate connections.
-        """
-        while not self.status_stop.is_set():
-            try:
-                task = self.status_queue.get(timeout=0.25)
-            except queue.Empty:
-                continue
-            room_names, properties = task
-            try:
-                self._refresh_status_cache(room_names, properties)
-            except Exception:
-                logger.exception('Unexpected background status-cache refresh failure')
-            finally:
-                self.status_queue.task_done()
-
-    def _refresh_status_cache(self, room_names, properties):
-        try:
-            for room_name in room_names:
-                room = ROOMS.get(room_name)
-                bulbs_in_room = list(room.bulbs) if room is not None else []
-                if not bulbs_in_room:
-                    continue
-                target = bulbs_in_room[0]
-                probe = Bulb(target._ip, roomName=room_name)
-                try:
-                    # This socket is independent of the command worker's socket.
-                    # A shorter timeout bounds time spent on an unresponsive bulb.
-                    sock = probe._socket
-                    sock.settimeout(1.5)
-                    fresh = probe.get_properties(list(properties), forceCall=True)
-                    latest_room = ROOMS.get(room_name)
-                    if latest_room is not None:
-                        current = next(
-                            (bulb for bulb in latest_room.bulbs if bulb._ip == target._ip),
-                            None,
-                        )
-                        if current is not None:
-                            current._last_properties.update(fresh)
-                            current._properties_cache_time = time.monotonic()
-                            self._publish_status_snapshot()
-                    self.status_refresh_last_error.pop(room_name, None)
-                except Exception as exc:
-                    now = time.monotonic()
-                    last = self.status_refresh_last_error.get(room_name, 0.0)
-                    if now - last >= 60:
-                        logger.warning(
-                            'Background status refresh failed for %s (%s): %s',
-                            room_name, target._ip, exc,
-                        )
-                        self.status_refresh_last_error[room_name] = now
-                finally:
-                    try:
-                        probe._discard_socket()
-                    except Exception:
-                        pass
-        finally:
-            with self.status_refresh_lock:
-                for room_name in room_names:
-                    self.status_refresh_pending.discard(room_name)
-
-    def _schedule_status_refresh(self, room_names, properties):
-        if not properties:
-            return
-        to_refresh = []
-        now = time.monotonic()
-        with self.status_refresh_lock:
-            for room_name in room_names:
-                if room_name in self.status_refresh_pending:
-                    continue
-                last = self.status_refresh_last_started.get(room_name, float('-inf'))
-                if now - last < self.status_refresh_min_interval:
-                    continue
-                self.status_refresh_pending.add(room_name)
-                self.status_refresh_last_started[room_name] = now
-                to_refresh.append(room_name)
-        if to_refresh:
-            self.status_queue.put((tuple(to_refresh), tuple(properties)))
-
     def _handle_dashboard_query(self, http_res):
         if http_res.get('query') != 'getProperty':
             return
-        logger.info('dashboard-query getProperty (cached response)')
+        logger.debug('dashboard-query getProperty (Room snapshot)')
         room_name = http_res.get('room')
         properties = list(http_res.get('properties', ()))
         if room_name == 'global':
@@ -535,17 +433,14 @@ class Server(object):
                 name: self._cached_properties(name, properties)
                 for name in ROOMS
             }
-            rooms_to_refresh = list(ROOMS)
         elif room_name in ROOMS:
             result = self._cached_properties(room_name, properties)
-            rooms_to_refresh = [room_name]
         else:
             logger.error('Unknown room in dashboard query: %s', room_name)
             result = {}
-            rooms_to_refresh = []
-        # Reply immediately; do not make HTTP status polling wait on a bulb socket.
+        # This reply is made entirely from Room dictionaries. No bulb access and no
+        # background refresh task is scheduled by a dashboard GET.
         self.http_pipe.send(result)
-        self._schedule_status_refresh(rooms_to_refresh, properties)
 
     def _process_ping_result(self, phone_status, pc_status, ping_res):
         self.envState.phoneStatus = phone_status
@@ -747,8 +642,6 @@ class Server(object):
         logger.error('Booting server')
         self.control_thread.start()
         self.discovery_thread.start()
-        self.status_thread.start()
-        self._schedule_status_refresh(tuple(ROOMS), ('power', 'bright', 'ct'))
         self.status_push_thread.start()
 
         if USE_MONITOR_ADVERT_BULBS:
