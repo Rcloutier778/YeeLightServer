@@ -217,7 +217,12 @@ class Server(object):
 
         self.http_event = mp.Event()
         self.http_pipe, http_child_pipe = mp.Pipe()
-        self.http_proc = mp.Process(target=http_server, args=(self.http_event, self.wake_condition, http_child_pipe, ))
+        # The dedicated push queue is initialized before the HTTP child process.
+        self.status_push_queue = mp.Queue(maxsize=16)
+        self.http_proc = mp.Process(
+            target=http_server,
+            args=(self.http_event, self.wake_condition, http_child_pipe, self.status_push_queue),
+        )
         self.http_res = None
 
 
@@ -248,11 +253,19 @@ class Server(object):
         self.status_refresh_pending = set()
         self.status_refresh_last_error = {}
         self.status_refresh_last_started = {}
-        self.status_refresh_min_interval = 2.0
+        self.status_refresh_min_interval = 1.5
         self.status_queue = queue.Queue()
         self.status_stop = threading.Event()
+        # The HTTP process receives snapshots through this separate channel;
+        # persistent SSE handlers never share the command/property pipe.
+        self.status_push_lock = threading.Lock()
+        self.last_pushed_snapshot = None
         self.status_thread = threading.Thread(
             target=self._status_worker, name='yeelight-status-worker', daemon=True
+        )
+        self.status_push_thread = threading.Thread(
+            target=self._status_push_refresh_scheduler,
+            name='yeelight-status-push-scheduler', daemon=True,
         )
         signal.signal(signal.SIGTERM, self.graceful_shutdown)
 
@@ -366,6 +379,68 @@ class Server(object):
         # has not yet been observed; the refresh is queued after this response.
         return {name: cache.get(name) for name in properties}
 
+    def _status_push_refresh_scheduler(self):
+        """Refresh bulb properties server-side and push only changed snapshots.
+
+        The Android app no longer needs to poll the HTTP status endpoint. This
+        scheduler observes real bulb changes (including changes made elsewhere)
+        and the HTTP process sends updates only when this snapshot changes.
+        """
+        properties = ('power', 'bright', 'ct')
+        while not self.status_stop.is_set():
+            self._schedule_status_refresh(tuple(ROOMS), properties)
+            if self.status_stop.wait(2.0):
+                break
+
+    def _publish_status_snapshot(self):
+        """Send a JSON-ready snapshot to the separate HTTP process if changed."""
+        snapshot = {}
+        for room_name in ROOMS:
+            room = ROOMS.get(room_name)
+            bulbs_in_room = list(room.bulbs) if room is not None else []
+            if not bulbs_in_room:
+                continue
+            cache = getattr(bulbs_in_room[0], '_last_properties', {})
+            power = cache.get('power')
+            bright = cache.get('bright')
+            ct = cache.get('ct')
+            # Avoid sending an incomplete room as if it were valid UI status.
+            if power is None or bright is None or ct is None:
+                continue
+            current_brightness = cache.get('current_brightness')
+            if current_brightness is None:
+                current_brightness = bright
+            snapshot[room_name] = {
+                'power': str(power),
+                'bright': str(bright),
+                'ct': str(ct),
+                'current_brightness': str(current_brightness),
+            }
+
+        if not snapshot:
+            return
+        with self.status_push_lock:
+            if snapshot == self.last_pushed_snapshot:
+                return
+            try:
+                self.status_push_queue.put_nowait(snapshot)
+            except queue.Full:
+                # A slow event relay should receive the latest snapshot, not build a
+                # backlog of stale UI states.
+                try:
+                    self.status_push_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                try:
+                    self.status_push_queue.put_nowait(snapshot)
+                except queue.Full:
+                    logger.warning('SSE status queue is full; dropping one status snapshot')
+                    return
+            except (OSError, ValueError):
+                logger.exception('Could not enqueue SSE status snapshot')
+                return
+            self.last_pushed_snapshot = snapshot
+
     def _status_worker(self):
         """Refresh property snapshots on an isolated thread using short-lived sockets.
 
@@ -410,6 +485,7 @@ class Server(object):
                         if current is not None:
                             current._last_properties.update(fresh)
                             current._properties_cache_time = time.monotonic()
+                            self._publish_status_snapshot()
                     self.status_refresh_last_error.pop(room_name, None)
                 except Exception as exc:
                     now = time.monotonic()
@@ -672,6 +748,8 @@ class Server(object):
         self.control_thread.start()
         self.discovery_thread.start()
         self.status_thread.start()
+        self._schedule_status_refresh(tuple(ROOMS), ('power', 'bright', 'ct'))
+        self.status_push_thread.start()
 
         if USE_MONITOR_ADVERT_BULBS:
             self.monitor_bulb_advert_proc.start()

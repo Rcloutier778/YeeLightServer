@@ -1,15 +1,93 @@
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from socketserver import ThreadingMixIn
 import json
 import signal
 import sys
 import platform
 import time
 import urllib.parse
+import queue
+import threading
 from yeelightLib import *
 
 logger = None
 
-def YeelightHTTP(event, cond, pipe):
+
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    """Serve persistent SSE connections without blocking ordinary REST requests."""
+    daemon_threads = True
+    allow_reuse_address = True
+
+
+class SSEHub:
+    """Fan out the latest JSON snapshot to each connected SSE client."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._clients = set()
+        self._latest = '{}'
+
+    @staticmethod
+    def _offer(client_queue, message):
+        # Keep streams bounded: for slow clients, the newest full snapshot is
+        # more useful than a backlog of obsolete intermediate snapshots.
+        try:
+            client_queue.put_nowait(message)
+            return
+        except queue.Full:
+            pass
+        try:
+            client_queue.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            client_queue.put_nowait(message)
+        except queue.Full:
+            pass
+
+    def publish(self, snapshot):
+        message = json.dumps(snapshot, separators=(',', ':'))
+        with self._lock:
+            if message == self._latest:
+                return
+            self._latest = message
+            clients = list(self._clients)
+        for client_queue in clients:
+            self._offer(client_queue, message)
+
+    def subscribe(self):
+        client_queue = queue.Queue(maxsize=8)
+        with self._lock:
+            self._clients.add(client_queue)
+            latest = self._latest
+        return client_queue, latest
+
+    def unsubscribe(self, client_queue):
+        with self._lock:
+            self._clients.discard(client_queue)
+
+
+def _relay_status_updates(status_push_queue, sse_hub):
+    """Move snapshots from the bulb-control process to HTTP client streams."""
+    while True:
+        try:
+            snapshot = status_push_queue.get(timeout=1.0)
+        except queue.Empty:
+            continue
+        except (EOFError, OSError):
+            return
+        try:
+            if isinstance(snapshot, dict):
+                sse_hub.publish(snapshot)
+        except Exception:
+            if logger is not None:
+                logger.exception('Could not publish SSE status snapshot')
+
+
+def YeelightHTTP(event, cond, pipe, sse_hub=None):
+    # Multiple SSE connections require a threaded HTTP server. Serialize the
+    # existing request/response pipe for property reads so concurrent readers
+    # cannot consume each other's replies.
+    property_pipe_lock = threading.Lock()
     def getProperty(room, *properties):
         data = {
             'room': room,
@@ -17,14 +95,14 @@ def YeelightHTTP(event, cond, pipe):
             'query': 'getProperty',
             'properties': properties
         }
-        with cond:
-            pipe.send(data)
-            event.set()
-            cond.notify()
-        if pipe.poll(10):
-            res = pipe.recv()
-            return json.dumps(res)
-        else:
+        with property_pipe_lock:
+            with cond:
+                pipe.send(data)
+                event.set()
+                cond.notify()
+            if pipe.poll(10):
+                res = pipe.recv()
+                return json.dumps(res)
             raise RuntimeError("Didn't receive answer in time")
     
     class YeelightHandler(BaseHTTPRequestHandler):
@@ -70,11 +148,14 @@ def YeelightHTTP(event, cond, pipe):
             
         # Info queries
         def do_GET(self):
+            parsed = urllib.parse.urlsplit(self.path)
+            if parsed.path.rstrip('/') == '/events':
+                self.do_SSE()
+                return
+
             paths = {
                 'property': [getProperty, 'application/json'],
             }
-
-            parsed = urllib.parse.urlsplit(self.path)
             path_parts = [urllib.parse.unquote(part) for part in parsed.path.split('/') if part]
 
             if path_parts and path_parts[0] in paths:
@@ -93,6 +174,37 @@ def YeelightHTTP(event, cond, pipe):
                 self.respond(status_code, content, content_type)
             else:
                 self.respond(500, 'Not a valid path')
+
+        def do_SSE(self):
+            if sse_hub is None:
+                self.respond(503, 'Status stream is unavailable', 'text/plain; charset=utf-8')
+                return
+
+            client_queue, initial_snapshot = sse_hub.subscribe()
+            try:
+                self.send_response(200)
+                self.send_header('Content-Type', 'text/event-stream; charset=utf-8')
+                self.send_header('Cache-Control', 'no-cache, no-transform')
+                self.send_header('Connection', 'keep-alive')
+                self.send_header('X-Accel-Buffering', 'no')
+                self.end_headers()
+
+                self.wfile.write(('data: %s\n\n' % initial_snapshot).encode('utf-8'))
+                self.wfile.flush()
+                while True:
+                    try:
+                        message = client_queue.get(timeout=15.0)
+                        frame = 'data: %s\n\n' % message
+                    except queue.Empty:
+                        frame = ': keep-alive\n\n'
+                    self.wfile.write(frame.encode('utf-8'))
+                    self.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                # The Android client normally disconnects when the app changes
+                # foreground/background mode or loses its allowed Wi-Fi network.
+                pass
+            finally:
+                sse_hub.unsubscribe(client_queue)
 
         # Actions
         def do_POST(self):
@@ -143,12 +255,23 @@ def YeelightHTTP(event, cond, pipe):
 
 
 
-def http_server(event, cond, pipe):
+def http_server(event, cond, pipe, status_push_queue=None):
     global logger
     logger = getLogger()
     setprocname('http_server')
     HOST_NAME = '10.0.0.2' if 'Windows' in platform.platform() else '10.0.0.18'
-    httpd = HTTPServer((HOST_NAME, REST_SERVER_PORT_NUMBER), YeelightHTTP(event, cond, pipe))
+    sse_hub = SSEHub()
+    if status_push_queue is not None:
+        threading.Thread(
+            target=_relay_status_updates,
+            args=(status_push_queue, sse_hub),
+            name='sse-status-relay',
+            daemon=True,
+        ).start()
+    httpd = ThreadedHTTPServer(
+        (HOST_NAME, REST_SERVER_PORT_NUMBER),
+        YeelightHTTP(event, cond, pipe, sse_hub),
+    )
     
     def cleanup(*args, **kwargs):
         httpd.server_close()
