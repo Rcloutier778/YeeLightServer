@@ -178,6 +178,12 @@ class Server(object):
         setprocname('Yeelight Lights server')
         set_IRL_sunset()
         self.envState = ENV_STATE
+        # Pair the two arrival signals (phone IP reappeared + ReturnFromAway)
+        # independently of their arrival order.  A server started while the phone
+        # is absent begins an active away episode.
+        self._phone_away_episode = not bool(self.envState.phoneStatus)
+        self._phone_reappeared_pending = False
+        self._return_from_away_pending = False
         for room in ROOMS.values():
             try:
                 room.resetFromLoggedState()
@@ -442,15 +448,103 @@ class Server(object):
         # background refresh task is scheduled by a dashboard GET.
         self.http_pipe.send(result)
 
+    def _try_complete_return_from_away(self):
+        """Apply the LivingRoom restore once both arrival signals are observed."""
+        if not (
+            self._phone_away_episode
+            and self._phone_reappeared_pending
+            and self._return_from_away_pending
+        ):
+            return False
+
+        living_room = ROOMS.get('LivingRoom')
+        if living_room is None:
+            logger.error('Cannot complete ReturnFromAway: LivingRoom is not configured')
+            return False
+
+        logger.info(
+            'Both phone reappearance and ReturnFromAway received; restoring LivingRoom with autoset'
+        )
+        # Write the marker before touching bulbs.  If a bulb operation fails,
+        # timer-driven presence enforcement still won't immediately turn the room off.
+        writeManualOverride(
+            room='LivingRoom',
+            offset=datetime.timedelta(hours=2),
+            action=MANUAL_AUTOSET_FORCE_LIGHT_ACTION,
+        )
+        living_room.autoset(autosetDuration=1, force=True, forceLight=True)
+
+        self._phone_away_episode = False
+        self._phone_reappeared_pending = False
+        self._return_from_away_pending = False
+        logger.info('ReturnFromAway restoration completed for LivingRoom')
+        return True
+
+    def _process_return_from_away_event(self, room_name='global'):
+        """Record the motion/ReturnFromAway half of the arrival handshake."""
+        if room_name not in ('global', 'LivingRoom'):
+            logger.warning(
+                'Ignoring ReturnFromAway event for %s; only LivingRoom is handled', room_name
+            )
+            return
+
+        if not self._phone_away_episode:
+            if not self.envState.phoneStatus:
+                self._phone_away_episode = True
+            else:
+                logger.info(
+                    'Ignoring ReturnFromAway: no active phone-away episode has been observed'
+                )
+                return
+
+        self._return_from_away_pending = True
+        logger.info(
+            'ReturnFromAway received; phone reappeared=%s',
+            self._phone_reappeared_pending,
+        )
+        self._try_complete_return_from_away()
+
     def _process_ping_result(self, phone_status, pc_status, ping_res):
+        previous_phone_status = bool(self.envState.phoneStatus)
+        phone_status = bool(phone_status)
+
+        # Begin a new away episode only on the online -> offline transition.
+        # Preserve an already-received ReturnFromAway event until the phone returns.
+        if previous_phone_status and not phone_status:
+            self._phone_away_episode = True
+            self._phone_reappeared_pending = False
+            self._return_from_away_pending = False
+        elif not previous_phone_status and phone_status and self._phone_away_episode:
+            self._phone_reappeared_pending = True
+
         self.envState.phoneStatus = phone_status
         self.envState.pcStatus = pc_status
         self.ping_res = ping_res
+
         if ping_res:
+            phone_returned_from_away = (
+                self._phone_away_episode and self._phone_reappeared_pending
+            )
+            # Establish the forced-light lease before touching bulbs when this is
+            # the phone's return from an away episode.  For unrelated presence
+            # transitions (for example, the PC waking), preserve the prior default
+            # manual-override behavior.
+            if phone_returned_from_away:
+                writeManualOverride(
+                    offset=datetime.timedelta(hours=2),
+                    action=MANUAL_AUTOSET_FORCE_LIGHT_ACTION,
+                )
+            else:
+                writeManualOverride()
+
+            # Keep the existing presence-restoration behavior, but ensure the
+            # phone-return path uses SLEEP rather than turning lights off during DND.
+            # The previous writeState('off') incorrectly overwrote the applied state.
             global_action('on')
-            global_action('autoset', force=True)
-            writeManualOverride()
-            global_action('writeState', 'off', self.envState.pcStatus, self.envState.phoneStatus)
+            global_action(
+                'autoset', force=True, forceLight=phone_returned_from_away
+            )
+            self._try_complete_return_from_away()
         else:
             # Temp fix for PC not having a valid IP address on waking from sleep.
             sunrise_time = datetime.datetime.strptime(SUNRISE_TIME, '%I:%M:%p').time()
@@ -506,6 +600,10 @@ class Server(object):
                     kwargs['autosetDuration'] = SWITCH_FLOW_DURATION
 
             room_name = http_res['room']
+            if action == 'returnFromAway':
+                self._process_return_from_away_event(room_name)
+                return
+
             if room_name == 'global':
                 logger.info('global http')
                 global_action(action, **kwargs)
@@ -527,12 +625,33 @@ class Server(object):
 
     def _process_timer_wake(self, timer_wake):
         logger.info('Timer wake')
+        # If either part of the paired arrival operation previously encountered a
+        # transient bulb failure, retry the pending restore on the next timer wake.
+        self._try_complete_return_from_away()
         if not (self.envState.phoneStatus and self.envState.pcStatus):
             logger.info(
-                'Phone(%s) and/or pc(%s) is offline, keeping lights off.',
+                'Phone(%s) and/or pc(%s) is offline; enforcing active forced-light overrides and keeping other rooms off.',
                 str(self.envState.phoneStatus), str(self.envState.pcStatus),
             )
-            global_action('off', auto=True)
+            now_utc = datetime.datetime.utcnow()
+            for room in ROOMS.values():
+                override = readManualOverride(room.name, returnDict=True)
+                override_active = (
+                    override['time'] + MANUAL_OVERRIDE_OFFSET > now_utc
+                )
+                if (
+                    override_active
+                    and override.get('action') == MANUAL_AUTOSET_FORCE_LIGHT_ACTION
+                ):
+                    # This room has an explicit return/manual forced-light lease.
+                    # Continue autoset (including SLEEP during DND) rather than
+                    # letting presence enforcement turn it off.
+                    room.autoset(
+                        AUTOSET_DURATION,
+                        autoset_auto_var=True,
+                    )
+                else:
+                    room.off(auto=True)
         else:
             global_action(
                 'autoset',

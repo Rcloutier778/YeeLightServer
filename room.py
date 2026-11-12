@@ -863,7 +863,25 @@ class Room:
         _from_on=False,                      # Internal: preserve on() caller semantics without stack inspection.
         ):
         
-        if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'off')):
+        # A ReturnFromAway/forced-light override keeps lights eligible for autoset
+        # even when phone presence is still catching up.  During DND, it also means
+        # autoset should select SLEEP rather than turning the room off.
+        manual_override = readManualOverride(self.name, returnDict=True)
+        manual_override_active = (
+            manual_override['time'] + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow()
+        )
+        force_light_override_active = (
+            manual_override_active
+            and manual_override.get('action') == MANUAL_AUTOSET_FORCE_LIGHT_ACTION
+        )
+        if force_light_override_active:
+            forceLight = True
+
+        if (
+            not force
+            and not force_light_override_active
+            and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'off'))
+        ):
             logger.info('Power is off, cancelling autoset')
             return -1
         #if not force and all(x.get_properties(['power'])['power'] == 'off' for x in self.bulbs):
@@ -900,19 +918,19 @@ class Room:
 
         # If what called autoset is not a checkping event
         if not force and not autoset_auto_var:
-            # Check if system tray has been used recently to override autoset
-            dct = readManualOverride(self.name, returnDict=True)
-            if dct['time'] + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow():
+            # Check if system tray has been used recently to override autoset.
+            dct = manual_override
+            if manual_override_active:
                 if dct['action'] == '':
                     dct['action'] = self._getLastState()['state']
                     logger.info(f'action was blank, setting to {dct["action"]} instead')
-                if (dct['action'] not in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) or (not isTimeInRange(DNDrange)):
+                if (dct['action'] not in ('autoset', MANUAL_AUTOSET_FORCE_LIGHT_ACTION)) or (not isTimeInRange(DNDrange)):
                     #if (dct['action'] == 'toggle' and self.bulbs[0].get_properties(['power'])['power'] == 'on') or (dct['action'] == 'on'):
                     if dct['action'] == 'toggle' and self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'], forceCall=True)['power'] == 'on', selectBulbIps=[self.bulbs[0]._ip])[0] or (dct['action'] == 'on'):
                         pass
-                    elif (dct['action'] == 'MANUAL_AUTOSET_FORCE_LIGHT') and (not isTimeInRange(DNDrange)):
+                    elif (dct['action'] == MANUAL_AUTOSET_FORCE_LIGHT_ACTION) and (not isTimeInRange(DNDrange)):
                         pass
-                    elif (dct['action'] in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) and isTimeInRange(nightrange):
+                    elif (dct['action'] in ('autoset', MANUAL_AUTOSET_FORCE_LIGHT_ACTION)) and isTimeInRange(nightrange):
                         pass
                     else:
                         # if the manual action wasn't a manual autoset, or it's not in DND time, return
@@ -920,7 +938,7 @@ class Room:
                         return -1
 
         if AUTOSET_PHONE_REQUIRED and not force and autoset_auto_var:
-            ld = readManualOverride(self.name)
+            ld = manual_override['time']
             if ld + MANUAL_OVERRIDE_OFFSET < datetime.datetime.utcnow():
                 if not self.envState.phoneStatus:
                     logger.info("AUTOSET_PHONE_REQUIRED is True and all conditions are met")
@@ -942,6 +960,11 @@ class Room:
         auto = not force
         if _from_on:
             auto = True
+        # A forced-light override is not a request to freeze the current state.
+        # Let autoset continue normally, but use the manual/unified scene path so
+        # an off bulb is actually switched on while the target is selected.
+        if force_light_override_active:
+            auto = False
 
         if isTimeInRange(dayrange):
             logger.info("Autoset: Day")
@@ -987,7 +1010,22 @@ class Room:
             color temperature and brightness. A value of None, None means turn off.
         """
     
-        if not force and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'off')):
+        manual_override = readManualOverride(self.name, returnDict=True)
+        manual_override_active = (
+            manual_override['time'] + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow()
+        )
+        force_light_override_active = (
+            manual_override_active
+            and manual_override.get('action') == MANUAL_AUTOSET_FORCE_LIGHT_ACTION
+        )
+        if force_light_override_active:
+            forceLight = True
+
+        if (
+            not force
+            and not force_light_override_active
+            and all(self.applyFuncAndRebuild(lambda x: x.get_properties(['power'], forceCall=True)['power'] == 'off'))
+        ):
             return None, None
     
     
@@ -1021,18 +1059,18 @@ class Room:
     
         # If what called autoset is not a checkping event
         if not force and not autoset_auto_var:
-            # Check if system tray has been used recently to override autoset
-            dct = readManualOverride(self.name, returnDict=True)
-            if dct['time'] + MANUAL_OVERRIDE_OFFSET > datetime.datetime.utcnow():
+            # Check if system tray has been used recently to override autoset.
+            dct = manual_override
+            if manual_override_active:
                 if dct['action'] == '':
                     dct['action'] = self._getLastState()['state']
-                if (dct['action'] not in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) or (not isTimeInRange(DNDrange)):
+                if (dct['action'] not in ('autoset', MANUAL_AUTOSET_FORCE_LIGHT_ACTION)) or (not isTimeInRange(DNDrange)):
                     #if (dct['action'] == 'toggle' and self.bulbs[0].get_properties(['power'])['power'] == 'on') or (dct['action'] == 'on'):
                     if dct['action'] == 'toggle' and self.applyFuncAndRebuild(lambda blb: blb.get_properties(['power'], forceCall=True)['power'] == 'on', selectBulbIps=[self.bulbs[0]._ip])[0] or (dct['action'] == 'on'):
                         pass
-                    elif (dct['action'] == 'MANUAL_AUTOSET_FORCE_LIGHT') and (not isTimeInRange(DNDrange)):
+                    elif (dct['action'] == MANUAL_AUTOSET_FORCE_LIGHT_ACTION) and (not isTimeInRange(DNDrange)):
                         pass
-                    elif (dct['action'] in ('autoset', 'MANUAL_AUTOSET_FORCE_LIGHT')) and isTimeInRange(nightrange):
+                    elif (dct['action'] in ('autoset', MANUAL_AUTOSET_FORCE_LIGHT_ACTION)) and isTimeInRange(nightrange):
                         pass
                     else:
                         # if the manual action wasn't a manual autoset, or it's not in DND time, return
@@ -1043,7 +1081,7 @@ class Room:
                             return None, None
     
         if AUTOSET_PHONE_REQUIRED and not force and autoset_auto_var:
-            ld = readManualOverride(self.name)
+            ld = manual_override['time']
             if ld + MANUAL_OVERRIDE_OFFSET < datetime.datetime.utcnow():
                 if not self.envState.phoneStatus:
                     ld = readManualOverride(self.name)
@@ -1125,24 +1163,16 @@ class Room:
 
 
     def returnFromAway(self):
-        """Restore lighting after the front-door motion sensor detects arrival.
+        """Restore this room using the same forced-light autoset policy.
 
-        The phone/PC presence state can remain ``False`` for a short time after
-        arrival (or remain unavailable entirely).  The server's five-minute timer
-        otherwise sees that offline state and calls ``off(auto=True)``, undoing
-        the lighting change made here.  Create a temporary manual override after
-        a successful return so that timer-driven presence enforcement cannot
-        immediately turn the lights back off.
+        The Server normally coordinates this event with phone reappearance before
+        invoking the room action.  This method remains safe when called directly.
         """
-        jdict = self._getLastState()
-        logger.info("In returnFromAway")
-        logger.info(f'state: {jdict["state"]} phoneStatus: {jdict["phoneStatus"]}')
-        if self.name == 'LivingRoom' and jdict['state'] == 'off' and not jdict['phoneStatus']:
-            logger.info("setting lights from returnFromAway")
-            self.autoset(autosetDuration=1, force=True)
-            writeManualOverride(
-                room=self.name,
-                offset=datetime.timedelta(hours=2),
-                action='returnFromAway',
-            )
-
+        if self.name != 'LivingRoom':
+            return
+        writeManualOverride(
+            room=self.name,
+            offset=datetime.timedelta(hours=2),
+            action=MANUAL_AUTOSET_FORCE_LIGHT_ACTION,
+        )
+        self.autoset(autosetDuration=1, force=True, forceLight=True)
